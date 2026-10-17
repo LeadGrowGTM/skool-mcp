@@ -43,7 +43,7 @@ stateDiagram-v2
     Sending --> Failed: HTTP not ok
 ```
 
-The helper always reads the whole body as text first. It does not follow a second URL. It does not retry.
+The helper always reads the whole body as text first. It does not try a second path of its own. It does not retry.
 
 ## Ok JSON comes back
 
@@ -54,7 +54,7 @@ If the status is ok and the text parses as JSON, the parsed value is returned. T
 The calls are:
 
 - Category labels: `GET /groups/{groupId}/labels`.
-- Courses, only when the caller passed a group id: `GET /groups/{groupId}/courses`. If both a group id and a community slug are passed, the group id wins and the slug is ignored.
+- Courses, only when `groupId` is a non-empty string: `GET /groups/{groupId}/courses`. A community slug passed with that group id is ignored.
 - New post: `POST /posts?notify=false&follow=true`. The JSON body is `post_type` `"generic"`, `group_id`, and `metadata`. Metadata always has `action` `0`, `content`, and `title`. A category is added as `metadata.labels` set to that one string, not as a list.
 - New comment: `POST /comments`. The JSON body is `post_id`, `group_id`, and `metadata.content`.
 

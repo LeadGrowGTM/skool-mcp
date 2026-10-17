@@ -17,6 +17,7 @@ sources:
   - src/tools/notifications.ts
   - README.md
   - SPEC.md
+  - API-DISCOVERY.md
 diagramLinks:
   Config: session-config
   NextReads: next-data-read
@@ -27,7 +28,7 @@ diagramLinks:
 
 # Skool MCP
 
-An MCP client starts this process over stdio. The process registers fourteen tools. Each tool reads a cookie string from a config file on the machine, then calls Skool over HTTPS. A box with a + is one of the harder paths.
+An MCP client starts this process over stdio. The process registers fourteen tools. A tool that calls out loads a cookie string from a config file on the machine and sends it with the request. The raw tool fetches whatever URL the caller names. The other tools call Skool through the helpers below. A box with a + is one of the harder paths.
 
 ```mermaid
 flowchart LR
@@ -41,7 +42,7 @@ flowchart LR
     Tools --> Raw[Arbitrary URL tool]
 ```
 
-These boxes are parts that exist together. They are not steps in one state machine. The process does not store community data of its own. It returns text from the upstream response, or it throws.
+These boxes are parts that exist together. They are not steps in one state machine. The process does not store community data of its own. It returns text built from the upstream response, or it throws.
 
 ## What the process registers
 
@@ -60,7 +61,7 @@ Reads that need a community slug use the argument slug, or `defaultCommunity` fr
 
 ## Two upstreams, plus one open fetch
 
-Read tools call `https://www.skool.com` (or `baseUrl` from config) at `/_next/data/{buildId}/...json`. The build id comes from the homepage HTML and is remembered in this process for 30 minutes. See [Next.js read routes](next-data-read.md).
+Read tools that use the Next.js helper call `baseUrl` from config (default `https://www.skool.com`) at `/_next/data/{buildId}/...json`. The build id comes from the homepage HTML and is reused while it is under 30 minutes old. The saved id can remain in memory after that, but it is not returned. See [Next.js read routes](next-data-read.md).
 
 `skool_community_labels`, `skool_posts_create`, `skool_posts_comment`, and `skool_courses_list` when a group id is passed call `https://api2.skool.com`. That host is fixed in code. It does not follow `baseUrl`. See [api2 writes](api2-write.md).
 
@@ -68,7 +69,7 @@ Read tools call `https://www.skool.com` (or `baseUrl` from config) at `/_next/da
 
 `skool_notifications` is the only tool that catches a failed data route and tries a second page. See [Notifications fallback](notifications-fallback.md).
 
-`skool_request` is the escape hatch. It fetches the URL it is given. Cookies and a browser User-Agent are added first, then any caller headers are copied on top, so a caller header can replace the cookie. HTTP error statuses are returned as text, not thrown. The tool description says the URL is a Skool URL. The code does not check the host.
+`skool_request` is the escape hatch. It fetches the URL it is given. The raw helper sets a browser User-Agent, the cookie string, and `Accept: application/json`, then copies any caller headers on top, so a caller header can replace any of those three. HTTP error statuses are returned as text, not thrown. The tool description says the URL is a Skool URL. The code does not check the host.
 
 Every client function sends the same Chrome 131 User-Agent string and the cookie header as the raw `cookies` string from config. An empty cookie string is still sent. Nothing in this repo refreshes, parses, or expires that string.
 
@@ -78,6 +79,6 @@ Every client function sends the same Chrome 131 User-Agent string and the cookie
 
 ## What this map does not verify
 
-No test file is in this repo, and this map did not call Skool. Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. The code only reacts to HTTP status and to whether a body parses. Those upstream notes are unverified here.
+No test file is in this repo, and this map did not call Skool. Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. Those notes are unverified here. The code reacts to HTTP status, to whether a body parses, to a truthy `pageProps` on the Next.js reads, to a `buildId` regular expression on the homepage, and to a notifications script match. It does not interpret those upstream notes.
 
 `SPEC.md` says the server should return clear errors when auth fails. The code has no branch that recognizes an auth failure. A 401 or 403 is the same as any other non-ok status on the helpers that throw, and it is just another status line on the helpers that do not.

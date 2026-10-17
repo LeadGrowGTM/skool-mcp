@@ -8,6 +8,7 @@ parent: skool-mcp
 sources:
   - src/config.ts
   - src/client.ts
+  - src/tools/notifications.ts
 diagramLinks: {}
 diagramDetails:
   - diagram: 0
@@ -20,13 +21,13 @@ diagramDetails:
     edge:
       from: Unloaded
       to: Unloaded
-      label: File missing or read fails
+      label: Missing file, read error, invalid JSON, or null
     section: The read failed
   - diagram: 0
     edge:
       from: Ready
       to: Ready
-      label: Another tool asks for config
+      label: A later call asks for config
     section: Later calls skip the disk
 ---
 
@@ -37,20 +38,20 @@ Every tool that talks to Skool asks for the same config. The first successful re
 ```mermaid
 stateDiagram-v2
     [*] --> Unloaded
-    Unloaded --> Ready: File reads and JSON parses
-    Unloaded --> Unloaded: File missing or read fails
-    Ready --> Ready: Another tool asks for config
+    Unloaded --> Ready: File reads and JSON parses to a non-null value
+    Unloaded --> Unloaded: Missing file, read error, invalid JSON, or null
+    Ready --> Ready: A later call asks for config
 ```
 
-The file path is the home directory plus `.config/skool-mcp/config.json`. This page describes that read. It does not describe whether the cookie is accepted by Skool.
+The path is `homedir()` joined with `.config/skool-mcp/config.json`. That join runs when this module loads, not on each read. This page describes that read. It does not describe whether the cookie is accepted by Skool.
 
 ## Nothing cached yet
 
-Until a read succeeds, the module keeps no config. The next call opens the file again. There is no other source: no environment variable and no flag overrides the path.
+Until a read succeeds, the module keeps no config. The next call opens the file again. Nothing in this file reads a flag or an environment variable of its own. On POSIX, `homedir()` returns `HOME` when that variable is set, including when it is empty. An empty `HOME` makes the joined path relative. When `HOME` is unset, `homedir()` uses the current user's home directory. `HOME` is seen at module load. Changing it later does not move the path in the running process. No other variable selects a different config path.
 
 ## Cookie string is cached
 
-A successful parse stores three strings. Missing fields become empty, except `baseUrl`, which becomes `https://www.skool.com` when it is absent. `cookies` and `defaultCommunity` become empty strings when they are absent. The code does not check that the cookie string is non-empty, and it does not check that the JSON has the expected types beyond what `JSON.parse` already did.
+A successful parse stores three fields. When `cookies` or `defaultCommunity` is null or absent, it becomes an empty string. When `baseUrl` is null or absent, it becomes `https://www.skool.com`. A value that is present is kept, including a present empty string, and the code does not coerce it to a string. The code does not check that the cookie string is non-empty. JSON `null` fails this read, because the code then reads fields from the parsed value. Any other JSON value takes the success path and fills missing fields.
 
 After this, the in-memory copy is returned as-is. Editing the file does not change a process that has already read it. Restarting the process is how a new cookie gets in.
 
@@ -58,7 +59,7 @@ The cookie string is sent as the `Cookie` header on the homepage fetch, on Next.
 
 ## The read failed
 
-If the file is missing, the thrown message names the path and shows a sample JSON object with empty placeholder fields. Any other failure, including invalid JSON, throws a message that the config could not be read. The cache stays empty either way.
+If the file is missing, the thrown message names the path and shows a sample object. In that sample, `cookies` and `defaultCommunity` are the placeholder text `...`, and `baseUrl` is `https://www.skool.com`. Any other failure, including invalid JSON and JSON `null`, throws a message that the config could not be read. The cache stays empty either way.
 
 `skool_notifications` calls this load before its own try/catch. A missing file there still throws. It does not fall through to the HTML page.
 

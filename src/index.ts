@@ -10,6 +10,7 @@ import { postsListTool, postsGetTool, postsCreateTool, postsCommentTool } from "
 import { coursesListTool, lessonsListTool } from "./tools/classroom.js";
 import { notificationsTool } from "./tools/notifications.js";
 import { chatChannelsTool, chatMessagesTool } from "./tools/chat.js";
+import { payoutsTool, revenueTool } from "./tools/billing.js";
 
 const server = new McpServer({
   name: "skool-mcp",
@@ -136,6 +137,13 @@ server.tool(
   chatMessagesTool.inputSchema,
   async (args) => ({ content: [{ type: "text", text: await chatMessagesTool.handler(args) }] }),
 );
+
+// Billing (read-only)
+for (const t of [payoutsTool, revenueTool]) {
+  server.tool(t.name, t.description, t.inputSchema, async (args: any) => ({
+    content: [{ type: "text", text: await (t.handler as (a: any) => Promise<string>)(args) }],
+  }));
+}
 
 // Start the server
 async function main() {

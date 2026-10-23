@@ -94,9 +94,26 @@ Uses session cookies from an authenticated Skool session. The `auth_token` JWT i
 
 Both chat tools use GET requests and never send messages, react, or mark messages read.
 
+### Billing (read-only)
+- `skool_payouts` — Read balances, payout account status, and transfer history for a group you own. Supports `offset` (default 0) and `limit` (default 50, maximum 100); `has_more` indicates more transfer history. Amounts are converted from cents to currency units. Bank account details are omitted.
+- `skool_revenue` — Read membership prices and counts, plus estimated gross monthly recurring revenue (`mrr_gross`) before fees. Annual prices are divided by 12, monthly prices are used directly, and other intervals contribute zero to MRR.
+
+Both require an explicit `groupId`; `defaultCommunity` is not used. They only make GET requests and never trigger payouts or change billing settings.
+
+### Read-only CLI
+
+After building, use the same authentication configuration with:
+
+```bash
+node scripts/skool-read.mjs payouts '{"groupId":"YOUR_GROUP_ID"}'
+node scripts/skool-read.mjs revenue '{"groupId":"YOUR_GROUP_ID"}'
+```
+
+The CLI also accepts `notifications`, `channels`, and `messages`. Pass tool arguments as a JSON object; the tool schema validates them and applies defaults before the handler runs. Arguments default to `{}` when omitted, so required fields must still be supplied. Results are printed to stdout.
+
 ## API Notes
 
 - **Community read operations** generally use Next.js data routes (`/_next/data/{buildId}/...`). The `buildId` is fetched dynamically.
-- **Write operations**, notifications, and chat use `api2.skool.com` REST endpoints.
+- **Write operations**, notifications, chat, and billing use `api2.skool.com` REST endpoints.
 - A `User-Agent` header is required (CloudFront blocks bare requests with 403).
 - See `API-DISCOVERY.md` for detailed endpoint documentation and response shapes.

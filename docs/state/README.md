@@ -16,6 +16,7 @@ sources:
   - src/tools/classroom.ts
   - src/tools/notifications.ts
   - src/tools/chat.ts
+  - src/tools/billing.ts
   - README.md
   - SPEC.md
   - API-DISCOVERY.md
@@ -29,12 +30,12 @@ diagramLinks:
 
 # Skool MCP
 
-An MCP client starts this process over stdio. The process registers sixteen tools. A tool that calls out loads a cookie string from a config file on the machine and sends it with the request. The raw tool fetches whatever URL the caller names. The other tools call Skool through the helpers below. A box with a + is one of the harder paths.
+An MCP client starts this process over stdio. The process registers the tools in `src/index.ts`. A tool that calls out loads a cookie string from a config file on the machine and sends it with the request. The raw tool fetches whatever URL the caller names. The other tools call Skool through the helpers below. A box with a + is one of the harder paths.
 
 ```mermaid
 flowchart LR
     Host[MCP client on stdio] --> Server[skool-mcp process]
-    Server --> Tools[Sixteen tools]
+    Server --> Tools[Registered tools]
     Tools --> Config[Session config]
     Tools --> NextReads[Next.js read routes]
     Tools --> ApiWrites[api2 writes]
@@ -57,6 +58,7 @@ The registered names, in source order:
 - `skool_posts_list`, `skool_posts_get`, `skool_posts_create`, and `skool_posts_comment` cover the feed and two writes.
 - `skool_courses_list` and `skool_lessons_list` cover the classroom.
 - For notification and chat tool usage, see [the README](../../README.md#notifications).
+- For billing tool usage, see [the README](../../README.md#billing-read-only).
 
 Reads that need a community slug use the argument slug, or `defaultCommunity` from config. If both are empty, those handlers throw before any HTTP call. Writes that take a group id do not look up that id themselves.
 
@@ -68,7 +70,7 @@ Read tools that use the Next.js helper call `baseUrl` from config (default `http
 
 `skool_members_approve` and `skool_members_reject` POST to guessed `api2` paths through the raw fetch, which returns the status instead of throwing on its own. See [Membership decisions](membership-decision.md).
 
-Notifications and chat also use the fixed api2 host. See [Notifications](notifications-fallback.md) for notification processing and [the README](../../README.md#chat-read-only) for chat usage.
+Notifications, chat, and billing also use the fixed api2 host. See [Notifications](notifications-fallback.md) for notification processing and [the README](../../README.md#chat-read-only) for chat usage. Billing uses the GET endpoints in `src/tools/billing.ts`; its user contract is in [the README](../../README.md#billing-read-only).
 
 `skool_request` is the escape hatch. It fetches the URL it is given. The raw helper sets a browser User-Agent, the cookie string, and `Accept: application/json`, then copies any caller headers on top, so a caller header can replace any of those three. HTTP error statuses are returned as text, not thrown. The tool description says the URL is a Skool URL. The code does not check the host.
 

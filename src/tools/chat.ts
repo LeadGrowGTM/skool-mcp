@@ -53,8 +53,8 @@ export const chatChannelsTool = {
         const m = (await api2Request(`/channels/${c.id}/messages`, {
           method: "GET",
           queryParams: { before: "1", after: "0", msg: c.last_message_id },
-        }).catch(() => null)) as { channel?: Channel; messages?: Msg[] } | null;
-        const lm = m?.messages?.find((x) => x.id === c.last_message_id) ?? m?.channel?.last_message;
+        })) as { channel?: Channel; messages?: Msg[] };
+        const lm = m.messages?.find((x) => x.id === c.last_message_id) ?? m.channel?.last_message;
         if (lm) last = shapeMsg(lm);
       }
       out.push({

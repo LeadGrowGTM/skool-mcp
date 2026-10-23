@@ -1,65 +1,31 @@
 ---
 id: notifications-fallback
-title: Notifications fallback
+title: Notifications
 kind: statechart
-status: mixed
-summary: Notifications try a Next.js data route, and any throw in that attempt falls through to an HTML page.
+status: implemented
+summary: Notifications use an authenticated api2 GET and return filtered records with cursor pagination.
 parent: skool-mcp
 sources:
   - src/tools/notifications.ts
   - src/client.ts
   - src/config.ts
 diagramLinks: {}
-diagramDetails:
-  - diagram: 0
-    node: PageProps
-    section: The data route had page props
-  - diagram: 0
-    node: HtmlPage
-    section: The data route threw
-  - diagram: 0
-    node: Embedded
-    section: The HTML held Next data
-  - diagram: 0
-    node: RawSnippet
-    section: The HTML had no usable payload
-  - diagram: 0
-    edge:
-      from: NextRoute
-      to: HtmlPage
-      label: The try block throws
-    section: The data route threw
 ---
 
-# Notifications fallback
+# Notifications
 
-This tool tries two ways to read notifications. The first calls the shared Next.js data helper. If that call throws, or the JSON has no usable `pageProps`, the handler fetches an HTML page and looks for an embedded script. A comment in the tool says notifications are likely at a user-level route. The two attempts are written in this handler. Which response the live site actually returns is unverified.
-
-Config is loaded before the chart starts. A missing config file throws there and does not reach the HTML fallback. The chart is what happens after config is already cached.
+`skool_notifications` uses `GET https://api2.skool.com/self/notifications?type=all`, adding `cursor` when supplied. It never marks notifications read. There is no Next.js or HTML fallback. Configuration, network, and non-ok HTTP errors propagate through the shared [api2 helper](api2-write.md). Config `baseUrl` resolves notification links; it does not select the API host.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NextRoute
-    NextRoute --> PageProps: pageProps is truthy
-    NextRoute --> HtmlPage: The try block throws
-    HtmlPage --> Embedded: Script JSON parses
-    HtmlPage --> RawSnippet: Script missing or JSON fails
+    [*] --> Fetching
+    Fetching --> Failed: Config or request fails
+    Fetching --> Shaping: Request succeeds
+    Shaping --> Returned: Filter and serialize
 ```
 
-The only argument is a page number. The schema default is `1`. Whether the SDK fills that default was not verified. The number is sent as `p` on both attempts.
+The handler reads `messages`, parses each record's `metadata.data` as JSON (using an empty object on parse failure), and returns `notifications`, `has_more`, and `next_cursor`. Each notification includes its id, category, action, unread flag, timestamp, absolute link or null, actor, text, content, post identifiers, and group identifiers. Missing optional values are null, except `created_at`, which is omitted when absent.
 
-## The data route had page props
+Category matching is ordered: actions starting with `mention` become `mention`; containing `reply` become `reply`; starting with `comment` become `comment`; containing `member` or `join` become `new_member`; starting with `upvote` or containing `like` become `like`; exactly `new-post` becomes `new_post`; everything else becomes `other`.
 
-The handler passes the path `/notifications` and query `p` set to the page. The shared helper turns that into `baseUrl` plus `/_next/data/{buildId}/notifications.json`. This uses the same build id cache as every other Next.js read. If `pageProps` is truthy, the tool returns that object pretty-printed and stops. It does not look at the HTML page. A missing or falsy `pageProps` throws and does not stay in this state.
-
-## The data route threw
-
-The catch has no filter. A build id failure, a non-ok data URL, a body that is not JSON, and a missing or falsy `pageProps` all take the same path. The error text is discarded. The tool does not tell the caller that the first attempt failed.
-
-## The HTML held Next data
-
-The fallback URL is `baseUrl` plus `/notifications?p=` plus the page number, fetched with the raw helper. The raw helper returns the status and the full body even when the status is not ok. The tool searches the body for a script tag that starts with `<script id="__NEXT_DATA__"`. The id has to be the first attribute, in double quotes. A later `id` attribute does not match. It parses the tag text as JSON and returns `props.pageProps` when that value is not null or undefined. Otherwise it returns the whole parsed value. The HTTP status is not included in that success text. If the raw fetch throws, that error leaves the handler. The chart does not turn it into a snippet.
-
-## The HTML had no usable payload
-
-If the script tag is missing, or the tag text is not JSON, the tool returns the HTTP status and the first 3000 characters of the body. This branch does not throw. The code does not special-case a 403, a login page, or a short document. If the script is missing they come back as that text. What those live pages contain is unverified. The caller cannot tell this case apart from a successful read except by reading the text.
+Optional `categories` and `unread_only` filters apply after fetching one upstream page. An empty category list applies no category filter. Filtering does not change upstream pagination: an empty result can still have `has_more=true`. When `has_more` is false, `next_cursor` is null; otherwise it uses the upstream cursor (omitted if the upstream supplies none). Pass that cursor on the next call. The former `page` argument is no longer supported. Live upstream payload shapes have not been verified by this document.

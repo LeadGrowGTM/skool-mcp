@@ -56,7 +56,7 @@ Since we don't have full API docs, build the server with a **discovery tool** fi
 - `skool.lessons.list` — List lessons in a course
 
 ### Notifications
-- `skool.notifications` — Get recent notifications
+See [Notifications and Chat in the README](README.md#notifications) for the current read-only tools and usage.
 
 ### Discovery/Debug
 - `skool.request` — Make an arbitrary authenticated request to Skool (for API discovery)

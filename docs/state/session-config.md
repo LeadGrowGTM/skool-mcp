@@ -61,7 +61,7 @@ The cookie string is sent as the `Cookie` header on the homepage fetch, on Next.
 
 If the file is missing, the thrown message names the path and shows a sample object. In that sample, `cookies` and `defaultCommunity` are the placeholder text `...`, and `baseUrl` is `https://www.skool.com`. Any other failure, including invalid JSON and JSON `null`, throws a message that the config could not be read. The cache stays empty either way.
 
-`skool_notifications` calls this load before its own try/catch. A missing file there still throws. It does not fall through to the HTML page.
+`skool_notifications` loads configuration before requesting notifications. A missing file throws before the request.
 
 ## Later calls skip the disk
 

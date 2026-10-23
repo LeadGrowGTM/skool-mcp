@@ -12,7 +12,6 @@ sources:
   - src/tools/members.ts
   - src/tools/posts.ts
   - src/tools/classroom.ts
-  - src/tools/notifications.ts
 diagramLinks: {}
 diagramDetails:
   - diagram: 0
@@ -55,7 +54,7 @@ stateDiagram-v2
     Fresh --> Cold: Refresh of a 30 minute id fails
 ```
 
-A read that already has an id then makes one GET. Tools other than notifications do not catch the failure. They throw, and the MCP handler in `src/index.ts` does not catch it either.
+A read that already has an id then makes one GET. These tools do not catch the failure. They throw, and the MCP handler in `src/index.ts` does not catch it either.
 
 ```mermaid
 stateDiagram-v2
@@ -99,7 +98,6 @@ The tools that use this helper, and the path they pass:
 - Pending members use the same members path with `group` and `tab=pending`, and no page argument.
 - Courses without a group id use `/{slug}/classroom` with `group`.
 - Lessons use `/{slug}/classroom/{courseSlug}` with `group` and `course`.
-- Notifications tries `/notifications` with `p` for the page. Its failure path is a different page.
 
 Each of those handlers then requires `pageProps` on the parsed object. If it is missing or falsy, the handler throws. The returned text is `pageProps` pretty-printed. The rest of the Next.js payload is dropped. What Skool puts inside `pageProps` is unverified here.
 
@@ -109,4 +107,4 @@ The slug is the tool argument when that argument is a non-empty string. Otherwis
 
 A non-ok status throws. The message includes the status, the status text, and up to 500 characters of the body. If reading that error body throws, the message still goes out and the body part is empty. A body that is not JSON throws from the JSON parse after the status check. If `fetch` rejects before a response, that error also ends in Failed. The build id cache is left as it was.
 
-Notifications is the one caller that catches a throw from this helper and tries an HTML page. The other callers surface the throw.
+All callers of this helper surface the throw.

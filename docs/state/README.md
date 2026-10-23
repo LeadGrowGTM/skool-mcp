@@ -15,6 +15,7 @@ sources:
   - src/tools/posts.ts
   - src/tools/classroom.ts
   - src/tools/notifications.ts
+  - src/tools/chat.ts
   - README.md
   - SPEC.md
   - API-DISCOVERY.md
@@ -28,17 +29,17 @@ diagramLinks:
 
 # Skool MCP
 
-An MCP client starts this process over stdio. The process registers fourteen tools. A tool that calls out loads a cookie string from a config file on the machine and sends it with the request. The raw tool fetches whatever URL the caller names. The other tools call Skool through the helpers below. A box with a + is one of the harder paths.
+An MCP client starts this process over stdio. The process registers sixteen tools. A tool that calls out loads a cookie string from a config file on the machine and sends it with the request. The raw tool fetches whatever URL the caller names. The other tools call Skool through the helpers below. A box with a + is one of the harder paths.
 
 ```mermaid
 flowchart LR
     Host[MCP client on stdio] --> Server[skool-mcp process]
-    Server --> Tools[Fourteen tools]
+    Server --> Tools[Sixteen tools]
     Tools --> Config[Session config]
     Tools --> NextReads[Next.js read routes]
     Tools --> ApiWrites[api2 writes]
     Tools --> Membership[Membership decisions]
-    Tools --> Notifications[Notifications fallback]
+    Tools --> Notifications[Notifications]
     Tools --> Raw[Arbitrary URL tool]
 ```
 
@@ -55,7 +56,7 @@ The registered names, in source order:
 - `skool_members_list`, `skool_members_pending`, `skool_members_approve`, and `skool_members_reject` cover the member list and a membership decision.
 - `skool_posts_list`, `skool_posts_get`, `skool_posts_create`, and `skool_posts_comment` cover the feed and two writes.
 - `skool_courses_list` and `skool_lessons_list` cover the classroom.
-- `skool_notifications` tries a data route, then an HTML page.
+- For notification and chat tool usage, see [the README](../../README.md#notifications).
 
 Reads that need a community slug use the argument slug, or `defaultCommunity` from config. If both are empty, those handlers throw before any HTTP call. Writes that take a group id do not look up that id themselves.
 
@@ -67,7 +68,7 @@ Read tools that use the Next.js helper call `baseUrl` from config (default `http
 
 `skool_members_approve` and `skool_members_reject` POST to guessed `api2` paths through the raw fetch, which returns the status instead of throwing on its own. See [Membership decisions](membership-decision.md).
 
-`skool_notifications` is the only tool that catches a failed data route and tries a second page. See [Notifications fallback](notifications-fallback.md).
+Notifications and chat also use the fixed api2 host. See [Notifications](notifications-fallback.md) for notification processing and [the README](../../README.md#chat-read-only) for chat usage.
 
 `skool_request` is the escape hatch. It fetches the URL it is given. The raw helper sets a browser User-Agent, the cookie string, and `Accept: application/json`, then copies any caller headers on top, so a caller header can replace any of those three. HTTP error statuses are returned as text, not thrown. The tool description says the URL is a Skool URL. The code does not check the host.
 
@@ -79,6 +80,6 @@ Every client function sends the same Chrome 131 User-Agent string and the cookie
 
 ## What this map does not verify
 
-No test file is in this repo, and this map did not call Skool. Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. Those notes are unverified here. The code reacts to HTTP status, to whether a body parses, to a truthy `pageProps` on the Next.js reads, to a `buildId` regular expression on the homepage, and to a notifications script match. It does not interpret those upstream notes.
+No test file is in this repo, and this map did not call Skool. Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. Those notes are unverified here. The code reacts to HTTP status, to whether a body parses, to a truthy `pageProps` on the Next.js reads, and to a `buildId` regular expression on the homepage. It does not interpret those upstream notes.
 
 `SPEC.md` says the server should return clear errors when auth fails. The code has no branch that recognizes an auth failure. A 401 or 403 is the same as any other non-ok status on the helpers that throw, and it is just another status line on the helpers that do not.

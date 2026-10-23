@@ -7,7 +7,6 @@ import { api2Request } from "../client.js";
 //   GET /groups/{id}/get-billing-products-data?product_type=membership -> prices + membership_count
 
 const cents = (n?: number) => (typeof n === "number" ? Math.round(n) / 100 : null);
-const DEFAULT_GROUP = "5bb076b6d6254fb2a3f0e4347bbe47a8"; // /legion
 
 type Transfer = { id?: string; amount?: number; currency?: string; status?: string; created?: number; created_at?: string; arrival_date?: number };
 
@@ -17,7 +16,7 @@ export const payoutsTool = {
     "Read-only Skool payout data for a group you own: balance (pending/available, in dollars) and payout (transfer) history. " +
     "Never triggers a payout or changes payout settings. Bank account is shown masked only.",
   inputSchema: {
-    groupId: z.string().default(DEFAULT_GROUP),
+    groupId: z.string(),
     offset: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(100).default(50),
   },
@@ -53,7 +52,7 @@ export const revenueTool = {
   description:
     "Read-only Skool revenue snapshot for a group you own: each membership price with its active membership count, and MRR " +
     "computed from those (annual prices divided by 12). Gross, before Skool/Stripe fees.",
-  inputSchema: { groupId: z.string().default(DEFAULT_GROUP) },
+  inputSchema: { groupId: z.string() },
   async handler(args: { groupId: string }) {
     const d = (await api2Request(`/groups/${args.groupId}/get-billing-products-data`, {
       method: "GET",

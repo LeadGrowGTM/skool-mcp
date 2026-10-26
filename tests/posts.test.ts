@@ -138,12 +138,19 @@ test("more than 10 videos are rejected before any HTTP call", async () => {
 test("upload video creates a Mux video then PUTs the bytes to the upload URL", async () => {
   const file = join(home, "clip.mp4");
   writeFileSync(file, Buffer.from([0, 1, 2, 3]));
+  let sent: Buffer = Buffer.alloc(0);
   mockFetch((call) => {
     if (call.url === "https://api2.skool.com/videos") {
       return jsonOk({ videoId: "video-1", uploadUrl: "https://upload.example.test/put-here" });
     }
     return new Response("", { status: 200 });
   });
+  const inner = globalThis.fetch;
+  // Drain the streamed body like real fetch does, before the handler closes the file.
+  globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
+    if (opts.body instanceof ReadableStream) sent = Buffer.from(await new Response(opts.body).arrayBuffer());
+    return inner(url as string, opts);
+  }) as typeof fetch;
 
   const out = await videos.postsUploadVideoTool.handler({
     groupId: GROUP,
@@ -162,7 +169,6 @@ test("upload video creates a Mux video then PUTs the bytes to the upload URL", a
   assert.equal(calls[1].url, "https://upload.example.test/put-here");
   assert.equal(calls[1].method, "PUT");
   assert.equal(calls[1].headers["Content-Length"], "4");
-  const sent = Buffer.from(await new Response(calls[1].body as ReadableStream).arrayBuffer());
   assert.deepEqual([...sent], [0, 1, 2, 3]);
   // Signed upload URL must not receive the session cookie.
   assert.equal(calls[1].headers.Cookie, undefined);

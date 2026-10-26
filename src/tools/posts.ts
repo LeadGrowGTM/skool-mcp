@@ -179,7 +179,7 @@ export const postsCommentTool = {
     videoLink?: string;
     videoLinks?: string[];
   }) {
-    const result = await api2Request("/posts?notify=false&follow=true", {
+    const result = await api2Request("/posts", {
       method: "POST",
       body: buildCommentPayload(args),
     });

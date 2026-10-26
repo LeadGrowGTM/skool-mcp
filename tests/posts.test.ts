@@ -60,7 +60,7 @@ test("comment posts to /posts with post_type comment and parent/root ids", async
   const out = await posts.postsCommentTool.handler({ postId: POST, groupId: GROUP, content: "hello" });
   assert.equal(JSON.parse(out).id, "comment-1");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  assert.equal(calls[0].url, "https://api2.skool.com/posts");
   assert.equal(calls[0].method, "POST");
   assert.deepEqual(calls[0].body, {
     post_type: "comment",
@@ -161,7 +161,9 @@ test("upload video creates a Mux video then PUTs the bytes to the upload URL", a
   });
   assert.equal(calls[1].url, "https://upload.example.test/put-here");
   assert.equal(calls[1].method, "PUT");
-  assert.equal((calls[1].body as Uint8Array).length, 4);
+  assert.equal(calls[1].headers["Content-Length"], "4");
+  const sent = Buffer.from(await new Response(calls[1].body as ReadableStream).arrayBuffer());
+  assert.deepEqual([...sent], [0, 1, 2, 3]);
   // Signed upload URL must not receive the session cookie.
   assert.equal(calls[1].headers.Cookie, undefined);
 });

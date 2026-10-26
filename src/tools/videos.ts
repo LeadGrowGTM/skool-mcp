@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { readFile, stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { basename, extname } from "node:path";
 import { api2Request, putBinary } from "../client.js";
 
@@ -136,26 +137,35 @@ export const postsUploadVideoTool = {
     if (!info.isFile()) throw new Error(`Video path is not a file: ${args.filePath}`);
     assertVideoSize(info.size);
 
-    const bytes = await readFile(args.filePath);
+    let videoId = "";
+    const handle = await open(args.filePath, "r").catch(() => {
+      throw new Error(`Video file is not readable: ${args.filePath}`);
+    });
 
-    const created = parseCreatedVideo(
-      await api2Request("/videos", {
-        method: "POST",
-        body: {
-          group_id: args.groupId,
-          file_name: fileName,
-          content_type: contentType,
-          content_length: info.size,
-          reference_type: args.referenceType,
-        },
-      }),
-    );
+    try {
+      const created = parseCreatedVideo(
+        await api2Request("/videos", {
+          method: "POST",
+          body: {
+            group_id: args.groupId,
+            file_name: fileName,
+            content_type: contentType,
+            content_length: info.size,
+            reference_type: args.referenceType,
+          },
+        }),
+      );
 
-    await putBinary(created.uploadUrl, bytes, contentType);
+      const stream = handle.createReadStream({ autoClose: false });
+      await putBinary(created.uploadUrl, Readable.toWeb(stream) as ReadableStream, contentType, info.size);
+      videoId = created.videoId;
+    } finally {
+      await handle.close();
+    }
 
     return JSON.stringify(
       {
-        videoId: created.videoId,
+        videoId,
         fileName,
         contentType,
         contentLength: info.size,

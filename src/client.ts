@@ -121,6 +121,27 @@ export async function api2Request(
 }
 
 /**
+ * PUT raw bytes to a pre-signed upload URL returned by Skool (no cookies sent).
+ */
+export async function putBinary(
+  url: string,
+  body: Uint8Array | ReadableStream,
+  contentType: string,
+  contentLength: number,
+): Promise<void> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType, "Content-Length": String(contentLength) },
+    body: body as BodyInit,
+    duplex: "half",
+  } as RequestInit);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Video upload failed: ${res.status} ${res.statusText} — ${body.slice(0, 500)}`);
+  }
+}
+
+/**
  * Generic authenticated fetch to any Skool URL — used by skool.request tool.
  */
 export async function rawRequest(

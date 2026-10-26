@@ -78,8 +78,22 @@ Uses session cookies from an authenticated Skool session. The `auth_token` JWT i
 ### Posts
 - `skool.posts.list` — List posts in a community (with category filter, pagination)
 - `skool.posts.get` — Get a specific post with comments
-- `skool.posts.create` — Create a new post
-- `skool.posts.comment` — Comment on a post
+- `skool.posts.create` — Create a new post. Attach files with `attachmentIds`, an uploaded video with `videoIds`, or an external video with `videoLink`/`videoLinks` (YouTube, Vimeo, Loom, or Wistia; at most 10 videos total)
+- `skool.posts.comment` — Comment on a post (also accepts `videoIds`/`videoLink`/`videoLinks`)
+- `skool_posts_upload_video` — Upload a local video file (under 30GB) and return its video id for `videoIds`
+
+#### Posting a video
+
+Uploaded video (creates an upload on Skool, so only run it when you intend to post):
+
+```text
+skool_posts_upload_video { groupId, filePath: "/path/clip.mp4" }  -> { videoId, ... }
+skool_posts_create { groupId, title, content, videoIds: ["<videoId>"] }
+```
+
+External video (no upload): pass `videoLink: "https://www.youtube.com/watch?v=..."` (or a Vimeo, Loom, or Wistia URL) to `skool_posts_create` or `skool_posts_comment`. Unsupported hosts are rejected before any request.
+
+Comments are created with `POST /posts` using `post_type: "comment"` and `parent_id`/`root_id` set to the parent post id. The former `POST /comments` route returns 404.
 
 ### Classroom
 - `skool.courses.list` — List courses
@@ -110,6 +124,12 @@ node scripts/skool-read.mjs revenue '{"groupId":"YOUR_GROUP_ID"}'
 ```
 
 The CLI also accepts `notifications`, `channels`, and `messages`. Pass tool arguments as a JSON object; the tool schema validates them and applies defaults before the handler runs. Arguments default to `{}` when omitted, so required fields must still be supplied. Results are printed to stdout.
+
+## Tests
+
+```bash
+npm test   # mocked-HTTP unit tests for comment/video payloads; no live Skool calls
+```
 
 ## API Notes
 

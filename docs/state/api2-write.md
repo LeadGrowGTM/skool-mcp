@@ -3,12 +3,13 @@ id: api2-write
 title: api2 writes
 kind: statechart
 status: implemented
-summary: Labels, course lookup, new posts, comments, and video uploads call api2.skool.com and throw when the status is not ok.
+summary: Labels, course lookup, posts, comments, upload registration, and image status checks use api2.skool.com.
 parent: skool-mcp
 sources:
   - src/client.ts
   - src/tools/community.ts
   - src/tools/posts.ts
+  - src/tools/images.ts
   - src/tools/videos.ts
   - src/tools/classroom.ts
   - tests/posts.test.ts
@@ -35,7 +36,7 @@ diagramDetails:
 
 Some tools call `https://api2.skool.com` instead of a Next.js data URL. The host is fixed. Config `baseUrl` is not used. Config is still loaded first, because the cookie string has to be attached. If that load throws, the request is never sent. This chart starts once the helper is sending.
 
-Whether these paths and bodies match the live Skool API is partly verified. The comment shape below matches a comment created live on 2026-10-26 and the shapes existing live comments carry. The video shapes below match Skool's web client (`createPost` sends `metadata.video_ids`/`metadata.video_links`; `createMuxVideo` posts to `/videos`) and, for `videoLinks`, a live feed post read back read-only. The video upload itself was not run live; it is covered only by mocked-HTTP tests in `tests/posts.test.ts`.
+Whether these paths and bodies match the live Skool API is partly verified. The comment shape below matches a comment created live on 2026-10-26 and the shapes existing live comments carry. The video shapes below match Skool's web client (`createPost` sends `metadata.video_ids`/`metadata.video_links`; `createMuxVideo` posts to `/videos`) and, for `videoLinks`, a live feed post read back read-only. Image and video uploads were not run live; they are covered by mocked-HTTP tests in `tests/posts.test.ts`.
 
 ```mermaid
 stateDiagram-v2

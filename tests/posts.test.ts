@@ -288,6 +288,22 @@ test("create post reports images still processing after the poll limit", async (
   assert.equal((create.body as { metadata: { attachments: string } }).metadata.attachments, "file-slow.png");
 });
 
+test("failed image status checks are not reported as processing delays", async () => {
+  const image = join(home, "status-error.png");
+  writeFileSync(image, Buffer.from([1, 2, 3]));
+  mockFetch((call) => {
+    if (call.url.startsWith("https://api2.skool.com/files?ids=")) return new Response("status unavailable", { status: 500 });
+    return filesResponder(call);
+  });
+  drainUploads();
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] }),
+    /api2 request failed: 500/,
+  );
+  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 1);
+  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/posts")).length, 0);
+});
+
 test("create post permits 11 existing attachment ids without images", async () => {
   const attachmentIds = Array.from({ length: 11 }, (_, i) => `existing-${i}`);
   mockFetch(filesResponder);

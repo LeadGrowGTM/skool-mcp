@@ -56,9 +56,9 @@ export function parseCreatedFile(result: unknown): CreatedFile {
 
 async function waitForFile(fileId: string): Promise<boolean> {
   for (let i = 0; i < POLL_ATTEMPTS; i++) {
-    const res = (await api2Request("/files", { queryParams: { ids: fileId } }).catch(() => null)) as {
+    const res = (await api2Request("/files", { queryParams: { ids: fileId } })) as {
       files?: { postprocessed_at?: unknown; metadata?: { read_url?: unknown } }[];
-    } | null;
+    };
     const file = res?.files?.[0];
     if (file?.postprocessed_at && file.metadata?.read_url) return true;
     if (i < POLL_ATTEMPTS - 1) await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));

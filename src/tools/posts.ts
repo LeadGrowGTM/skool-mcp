@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { nextDataRequest, api2Request } from "../client.js";
 import { loadConfig } from "../config.js";
-import { assertImageCount, prepareImage, uploadImage, type PreparedImage } from "./images.js";
+import { assertImageCount, prepareImage, uploadImage, type ImageStatus, type PreparedImage } from "./images.js";
 import { assertVideoCount, normalizeVideoLinks } from "./videos.js";
 
 export interface PostVideoOptions {
@@ -161,11 +161,11 @@ export const postsCreateTool = {
     try {
       for (const image of images) prepared.push(await prepareImage(image));
       const uploaded: string[] = [];
-      const stillProcessing: { fileId: string; path: string }[] = [];
+      const imageStatuses: { fileId: string; path: string; status: ImageStatus }[] = [];
       for (const [index, image] of prepared.entries()) {
-        const { fileId, processed } = await uploadImage(args.groupId, image);
+        const { fileId, status } = await uploadImage(args.groupId, image);
         uploaded.push(fileId);
-        if (!processed) stillProcessing.push({ fileId, path: images[index] });
+        imageStatuses.push({ fileId, path: images[index], status });
       }
 
       const result = await api2Request("/posts?notify=false&follow=true", {
@@ -173,7 +173,7 @@ export const postsCreateTool = {
         body: buildCreatePayload({ ...args, attachmentIds: [...(args.attachmentIds ?? []), ...uploaded] }),
       });
 
-      return JSON.stringify(images.length ? { post: result, stillProcessing } : result, null, 2);
+      return JSON.stringify(images.length ? { post: result, imageStatuses } : result, null, 2);
     } finally {
       await Promise.all(prepared.map((image) => image.handle.close()));
     }

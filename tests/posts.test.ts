@@ -237,7 +237,13 @@ test("create post uploads each image via /files and attaches the ids", async () 
   mockFetch(filesResponder);
   const sent = drainUploads();
   const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
-  assert.deepEqual(JSON.parse(output), { post: { id: "post-1" }, stillProcessing: [] });
+  assert.deepEqual(JSON.parse(output), {
+    post: { id: "post-1" },
+    imageStatuses: [
+      { fileId: "file-a.png", path: a, status: "processed" },
+      { fileId: "file-b.JPG", path: b, status: "processed" },
+    ],
+  });
 
   const reg = calls.filter((c) => c.url === "https://api2.skool.com/files");
   assert.equal(reg.length, 2);
@@ -280,7 +286,7 @@ test("create post reports images still processing after the poll limit", async (
 
   assert.deepEqual(JSON.parse(output), {
     post: { id: "post-1" },
-    stillProcessing: [{ fileId: "file-slow.png", path: image }],
+    imageStatuses: [{ fileId: "file-slow.png", path: image, status: "stillProcessing" }],
   });
   assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 15);
   const create = calls[calls.length - 1];
@@ -288,20 +294,28 @@ test("create post reports images still processing after the poll limit", async (
   assert.equal((create.body as { metadata: { attachments: string } }).metadata.attachments, "file-slow.png");
 });
 
-test("failed image status checks are not reported as processing delays", async () => {
-  const image = join(home, "status-error.png");
-  writeFileSync(image, Buffer.from([1, 2, 3]));
-  mockFetch((call) => {
-    if (call.url.startsWith("https://api2.skool.com/files?ids=")) return new Response("status unavailable", { status: 500 });
-    return filesResponder(call);
-  });
-  drainUploads();
-  await assert.rejects(
-    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] }),
-    /api2 request failed: 500/,
-  );
-  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 1);
-  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/posts")).length, 0);
+test("unavailable image status still creates the post and reports status unknown", async () => {
+  const scenarios = [
+    { name: "http-error", response: () => new Response("status unavailable", { status: 500 }) },
+    { name: "empty", response: () => jsonOk({ files: [] }) },
+    { name: "timeout", response: (): Response => { throw new Error("status timeout"); } },
+  ];
+  for (const scenario of scenarios) {
+    const image = join(home, `status-${scenario.name}.png`);
+    writeFileSync(image, Buffer.from([1, 2, 3]));
+    mockFetch((call) => {
+      if (call.url.startsWith("https://api2.skool.com/files?ids=")) return scenario.response();
+      return filesResponder(call);
+    });
+    drainUploads();
+    const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+    assert.deepEqual(JSON.parse(output), {
+      post: { id: "post-1" },
+      imageStatuses: [{ fileId: `file-status-${scenario.name}.png`, path: image, status: "statusUnknown" }],
+    });
+    assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 1);
+    assert.equal(calls[calls.length - 1].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  }
 });
 
 test("create post permits 11 existing attachment ids without images", async () => {

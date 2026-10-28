@@ -54,16 +54,19 @@ export function parseCreatedFile(result: unknown): CreatedFile {
   };
 }
 
-async function waitForFile(fileId: string): Promise<boolean> {
+export type ImageStatus = "processed" | "stillProcessing" | "statusUnknown";
+
+async function waitForFile(fileId: string): Promise<ImageStatus> {
   for (let i = 0; i < POLL_ATTEMPTS; i++) {
-    const res = (await api2Request("/files", { queryParams: { ids: fileId } })) as {
+    const res = (await api2Request("/files", { queryParams: { ids: fileId } }).catch(() => null)) as {
       files?: { postprocessed_at?: unknown; metadata?: { read_url?: unknown } }[];
-    };
+    } | null;
     const file = res?.files?.[0];
-    if (file?.postprocessed_at && file.metadata?.read_url) return true;
+    if (!file) return "statusUnknown";
+    if (file.postprocessed_at && file.metadata?.read_url) return "processed";
     if (i < POLL_ATTEMPTS - 1) await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  return false;
+  return "stillProcessing";
 }
 
 export interface PreparedImage {
@@ -94,7 +97,7 @@ export async function prepareImage(filePath: string): Promise<PreparedImage> {
  * Upload one local image to Skool's file store (owned by the group) and return its file id.
  * The file is not attached to anything until a post is created with it.
  */
-export async function uploadImage(groupId: string, image: PreparedImage): Promise<{ fileId: string; processed: boolean }> {
+export async function uploadImage(groupId: string, image: PreparedImage): Promise<{ fileId: string; status: ImageStatus }> {
   const created = parseCreatedFile(
     await api2Request("/files", {
       method: "POST",
@@ -113,6 +116,6 @@ export async function uploadImage(groupId: string, image: PreparedImage): Promis
   const headers: Record<string, string> = created.acl ? { "x-amz-acl": created.acl } : {};
   const stream = image.handle.createReadStream({ autoClose: false });
   await putBinary(created.writeUrl, Readable.toWeb(stream) as ReadableStream, created.contentType || image.contentType, image.size, headers);
-  const processed = await waitForFile(created.fileId);
-  return { fileId: created.fileId, processed };
+  const status = await waitForFile(created.fileId);
+  return { fileId: created.fileId, status };
 }

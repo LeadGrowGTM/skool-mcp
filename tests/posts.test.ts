@@ -200,3 +200,83 @@ test("video size limit is under 30GB with a clear error", () => {
   assert.throws(() => videos.assertVideoSize(videos.MAX_VIDEO_BYTES + 1), /too large/);
   assert.doesNotThrow(() => videos.assertVideoSize(videos.MAX_VIDEO_BYTES - 1));
 });
+
+function filesResponder(call: Call): Response {
+  if (call.url === "https://api2.skool.com/files" && call.method === "POST") {
+    const n = (call.body as { file_name: string }).file_name;
+    return jsonOk({
+      file: { id: `file-${n}` },
+      write_url: `https://s3.example.test/put/${n}`,
+      acl: "public-read",
+      content_type: "image/png",
+      wait_token: "w",
+    });
+  }
+  if (call.url.startsWith("https://api2.skool.com/files?ids=")) {
+    return jsonOk({ files: [{ postprocessed_at: "2026-10-28T00:00:00Z", metadata: { read_url: "https://assets.example.test/x" } }] });
+  }
+  if (call.url.startsWith("https://api2.skool.com/posts")) return jsonOk({ id: "post-1" });
+  return new Response("", { status: 200 });
+}
+
+test("create post uploads each image via /files and attaches the ids", async () => {
+  const a = join(home, "a.png");
+  const b = join(home, "b.JPG");
+  writeFileSync(a, Buffer.from([1, 2, 3]));
+  writeFileSync(b, Buffer.from([4, 5]));
+  mockFetch(filesResponder);
+  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
+
+  const reg = calls.filter((c) => c.url === "https://api2.skool.com/files");
+  assert.equal(reg.length, 2);
+  assert.deepEqual(reg[0].body, {
+    file_name: "a.png",
+    content_type: "image/png",
+    content_length: 3,
+    content_disposition: "",
+    ref: "",
+    owner_id: GROUP,
+    large_thumbnail: false,
+  });
+  assert.equal((reg[1].body as { content_type: string }).content_type, "image/jpeg");
+
+  const puts = calls.filter((c) => c.method === "PUT");
+  assert.equal(puts.length, 2);
+  assert.equal(puts[0].url, "https://s3.example.test/put/a.png");
+  assert.equal(puts[0].headers["x-amz-acl"], "public-read");
+  assert.equal(puts[0].headers["Content-Type"], "image/png");
+  assert.equal(puts[0].headers.Cookie, undefined);
+
+  const create = calls[calls.length - 1];
+  assert.equal(create.url, "https://api2.skool.com/posts?notify=false&follow=true");
+  const meta = (create.body as { metadata: Record<string, unknown> }).metadata;
+  assert.equal(meta.attachments, "existing,file-a.png,file-b.JPG");
+  // Post is created only after every upload finished.
+  assert.equal(calls.indexOf(create), calls.length - 1);
+});
+
+test("create post without images makes no /files calls", async () => {
+  mockFetch(filesResponder);
+  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api2.skool.com/posts?notify=false&follow=true");
+});
+
+test("bad image inputs are rejected before any HTTP call", async () => {
+  mockFetch(filesResponder);
+  const txt = join(home, "doc.txt");
+  writeFileSync(txt, "x");
+  await assert.rejects(() => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [txt] }), /Cannot determine image content type/);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: Array.from({ length: 11 }, () => "x.png") }),
+    /at most 10 images/,
+  );
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [join(home, "a.png")], videoLink: "https://example.com/v" }),
+    /Unsupported video link/,
+  );
+  const empty = join(home, "empty.png");
+  writeFileSync(empty, "");
+  await assert.rejects(() => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [empty] }), /Image file is empty/);
+  assert.equal(calls.length, 0);
+});

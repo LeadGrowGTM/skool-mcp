@@ -25,7 +25,7 @@ before(async () => {
   videos = await import("../src/tools/videos.ts");
 });
 
-function mockFetch(responder: (call: Call) => Response) {
+function mockFetch(responder: (call: Call, options: Record<string, unknown>) => Response | Promise<Response>) {
   calls = [];
   globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
     const body =
@@ -37,7 +37,7 @@ function mockFetch(responder: (call: Call) => Response) {
       headers: (opts.headers ?? {}) as Record<string, string>,
     };
     calls.push(call);
-    return responder(call);
+    return responder(call, opts);
   }) as typeof fetch;
 }
 
@@ -298,7 +298,6 @@ test("unavailable image status still creates the post and reports status unknown
   const scenarios = [
     { name: "http-error", response: () => new Response("status unavailable", { status: 500 }) },
     { name: "empty", response: () => jsonOk({ files: [] }) },
-    { name: "timeout", response: (): Response => { throw new Error("status timeout"); } },
   ];
   for (const scenario of scenarios) {
     const image = join(home, `status-${scenario.name}.png`);
@@ -314,6 +313,38 @@ test("unavailable image status still creates the post and reports status unknown
       imageStatuses: [{ fileId: `file-status-${scenario.name}.png`, path: image, status: "statusUnknown" }],
     });
     assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 1);
+    assert.equal(calls[calls.length - 1].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  }
+});
+
+test("pending image status fetches and bodies time out without blocking posts", async () => {
+  for (const stage of ["fetch", "body"] as const) {
+    const image = join(home, `pending-${stage}.png`);
+    writeFileSync(image, Buffer.from([1, 2, 3]));
+    let aborted = false;
+    mockFetch((call, options) => {
+      if (!call.url.startsWith("https://api2.skool.com/files?ids=")) return filesResponder(call);
+      const signal = options.signal as AbortSignal | undefined;
+      const pending = (fail: (error: unknown) => void) => {
+        const safety = setTimeout(() => fail(new Error("status request did not abort")), 2500);
+        const onAbort = () => {
+          aborted = true;
+          clearTimeout(safety);
+          fail(signal?.reason);
+        };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      };
+      if (stage === "fetch") return new Promise<Response>((_, reject) => pending(reject));
+      return new Response(new ReadableStream({ start(controller) { pending((error) => controller.error(error)); } }));
+    });
+    drainUploads();
+    const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+    assert.equal(aborted, true);
+    assert.deepEqual(JSON.parse(output), {
+      post: { id: "post-1" },
+      imageStatuses: [{ fileId: `file-pending-${stage}.png`, path: image, status: "statusUnknown" }],
+    });
     assert.equal(calls[calls.length - 1].url, "https://api2.skool.com/posts?notify=false&follow=true");
   }
 });

@@ -58,7 +58,10 @@ export type ImageStatus = "processed" | "stillProcessing" | "statusUnknown";
 
 async function waitForFile(fileId: string): Promise<ImageStatus> {
   for (let i = 0; i < POLL_ATTEMPTS; i++) {
-    const res = (await api2Request("/files", { queryParams: { ids: fileId } }).catch(() => null)) as {
+    const res = (await api2Request("/files", {
+      queryParams: { ids: fileId },
+      signal: AbortSignal.timeout(POLL_INTERVAL_MS),
+    }).catch(() => null)) as {
       files?: { postprocessed_at?: unknown; metadata?: { read_url?: unknown } }[];
     } | null;
     const file = res?.files?.[0];

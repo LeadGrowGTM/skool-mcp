@@ -78,10 +78,11 @@ export async function api2Request(
     method?: string;
     body?: unknown;
     queryParams?: Record<string, string>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<unknown> {
   const config = await loadConfig();
-  const { method = "GET", body, queryParams } = options;
+  const { method = "GET", body, queryParams, signal } = options;
 
   const url = new URL(path, "https://api2.skool.com");
   if (queryParams) {
@@ -106,6 +107,7 @@ export async function api2Request(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
 
   const text = await res.text();

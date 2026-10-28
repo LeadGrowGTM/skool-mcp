@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { Readable } from "node:stream";
 import { api2Request, putBinary } from "../client.js";
 
 export const MAX_IMAGES_PER_POST = 10;
@@ -65,25 +66,42 @@ async function waitForFile(fileId: string): Promise<void> {
   throw new Error(`Image ${fileId} was uploaded but Skool did not finish processing it in time`);
 }
 
+export interface PreparedImage {
+  fileName: string;
+  contentType: string;
+  size: number;
+  handle: FileHandle;
+}
+
+export async function prepareImage(filePath: string): Promise<PreparedImage> {
+  const fileName = basename(filePath);
+  const contentType = resolveImageContentType(fileName);
+  const handle = await open(filePath, "r").catch(() => {
+    throw new Error(`Image file not found or not readable: ${filePath}`);
+  });
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error(`Image path is not a file: ${filePath}`);
+    if (info.size === 0) throw new Error(`Image file is empty: ${filePath}`);
+    return { fileName, contentType, size: info.size, handle };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
 /**
  * Upload one local image to Skool's file store (owned by the group) and return its file id.
  * The file is not attached to anything until a post is created with it.
  */
-export async function uploadImage(groupId: string, filePath: string): Promise<string> {
-  const fileName = basename(filePath);
-  const contentType = resolveImageContentType(fileName);
-  const bytes = await readFile(filePath).catch(() => {
-    throw new Error(`Image file not found or not readable: ${filePath}`);
-  });
-  if (bytes.length === 0) throw new Error(`Image file is empty: ${filePath}`);
-
+export async function uploadImage(groupId: string, image: PreparedImage): Promise<string> {
   const created = parseCreatedFile(
     await api2Request("/files", {
       method: "POST",
       body: {
-        file_name: fileName,
-        content_type: contentType,
-        content_length: bytes.length,
+        file_name: image.fileName,
+        content_type: image.contentType,
+        content_length: image.size,
         content_disposition: "",
         ref: "",
         owner_id: groupId,
@@ -93,7 +111,8 @@ export async function uploadImage(groupId: string, filePath: string): Promise<st
   );
 
   const headers: Record<string, string> = created.acl ? { "x-amz-acl": created.acl } : {};
-  await putBinary(created.writeUrl, bytes, created.contentType || contentType, bytes.length, headers);
+  const stream = image.handle.createReadStream({ autoClose: false });
+  await putBinary(created.writeUrl, Readable.toWeb(stream) as ReadableStream, created.contentType || image.contentType, image.size, headers);
   await waitForFile(created.fileId);
   return created.fileId;
 }

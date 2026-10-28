@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { nextDataRequest, api2Request } from "../client.js";
 import { loadConfig } from "../config.js";
-import { assertImageCount, resolveImageContentType, uploadImage } from "./images.js";
-import { basename } from "node:path";
+import { assertImageCount, prepareImage, uploadImage, type PreparedImage } from "./images.js";
 import { assertVideoCount, normalizeVideoLinks } from "./videos.js";
 
 export interface PostVideoOptions {
@@ -155,19 +154,24 @@ export const postsCreateTool = {
     videoLinks?: string[];
   }) {
     const images = args.images ?? [];
-    assertImageCount((args.attachmentIds?.length ?? 0) + images.length);
-    for (const image of images) resolveImageContentType(basename(image));
+    if (args.images !== undefined) assertImageCount((args.attachmentIds?.length ?? 0) + images.length);
     // Validate the rest of the payload before uploading anything.
     buildCreatePayload(args);
-    const uploaded: string[] = [];
-    for (const image of images) uploaded.push(await uploadImage(args.groupId, image));
+    const prepared: PreparedImage[] = [];
+    try {
+      for (const image of images) prepared.push(await prepareImage(image));
+      const uploaded: string[] = [];
+      for (const image of prepared) uploaded.push(await uploadImage(args.groupId, image));
 
-    const result = await api2Request("/posts?notify=false&follow=true", {
-      method: "POST",
-      body: buildCreatePayload({ ...args, attachmentIds: [...(args.attachmentIds ?? []), ...uploaded] }),
-    });
+      const result = await api2Request("/posts?notify=false&follow=true", {
+        method: "POST",
+        body: buildCreatePayload({ ...args, attachmentIds: [...(args.attachmentIds ?? []), ...uploaded] }),
+      });
 
-    return JSON.stringify(result, null, 2);
+      return JSON.stringify(result, null, 2);
+    } finally {
+      await Promise.all(prepared.map((image) => image.handle.close()));
+    }
   },
 };
 

@@ -225,6 +225,12 @@ test("create post uploads each image via /files and attaches the ids", async () 
   writeFileSync(a, Buffer.from([1, 2, 3]));
   writeFileSync(b, Buffer.from([4, 5]));
   mockFetch(filesResponder);
+  const sent: Buffer[] = [];
+  const inner = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
+    if (opts.body instanceof ReadableStream) sent.push(Buffer.from(await new Response(opts.body).arrayBuffer()));
+    return inner(url as string, opts);
+  }) as typeof fetch;
   await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
 
   const reg = calls.filter((c) => c.url === "https://api2.skool.com/files");
@@ -246,6 +252,7 @@ test("create post uploads each image via /files and attaches the ids", async () 
   assert.equal(puts[0].headers["x-amz-acl"], "public-read");
   assert.equal(puts[0].headers["Content-Type"], "image/png");
   assert.equal(puts[0].headers.Cookie, undefined);
+  assert.deepEqual(sent.map((bytes) => [...bytes]), [[1, 2, 3], [4, 5]]);
 
   const create = calls[calls.length - 1];
   assert.equal(create.url, "https://api2.skool.com/posts?notify=false&follow=true");
@@ -253,6 +260,30 @@ test("create post uploads each image via /files and attaches the ids", async () 
   assert.equal(meta.attachments, "existing,file-a.png,file-b.JPG");
   // Post is created only after every upload finished.
   assert.equal(calls.indexOf(create), calls.length - 1);
+});
+
+test("create post permits 11 existing attachment ids without images", async () => {
+  const attachmentIds = Array.from({ length: 11 }, (_, i) => `existing-${i}`);
+  mockFetch(filesResponder);
+  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", attachmentIds });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  assert.equal((calls[0].body as { metadata: { attachments: string } }).metadata.attachments, attachmentIds.join(","));
+});
+
+test("images plus attachment ids over 10 are rejected before any HTTP call", async () => {
+  mockFetch(filesResponder);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({
+      groupId: GROUP,
+      title: "T",
+      content: "C",
+      images: [join(home, "not-created.png")],
+      attachmentIds: Array.from({ length: 10 }, (_, i) => `existing-${i}`),
+    }),
+    /at most 10 images/,
+  );
+  assert.equal(calls.length, 0);
 });
 
 test("create post without images makes no /files calls", async () => {
@@ -278,5 +309,22 @@ test("bad image inputs are rejected before any HTTP call", async () => {
   const empty = join(home, "empty.png");
   writeFileSync(empty, "");
   await assert.rejects(() => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [empty] }), /Image file is empty/);
+  assert.equal(calls.length, 0);
+});
+
+test("all images are checked before the first upload", async () => {
+  const valid = join(home, "preflight-valid.png");
+  const empty = join(home, "preflight-empty.png");
+  writeFileSync(valid, Buffer.from([1]));
+  writeFileSync(empty, "");
+  mockFetch(filesResponder);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [valid, empty] }),
+    /Image file is empty/,
+  );
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [valid, join(home, "preflight-missing.png")] }),
+    /Image file not found or not readable/,
+  );
   assert.equal(calls.length, 0);
 });

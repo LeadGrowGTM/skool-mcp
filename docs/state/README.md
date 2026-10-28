@@ -13,6 +13,7 @@ sources:
   - src/tools/community.ts
   - src/tools/members.ts
   - src/tools/posts.ts
+  - src/tools/images.ts
   - src/tools/videos.ts
   - tests/posts.test.ts
   - src/tools/classroom.ts
@@ -68,7 +69,7 @@ Reads that need a community slug use the argument slug, or `defaultCommunity` fr
 
 Read tools that use the Next.js helper call `baseUrl` from config (default `https://www.skool.com`) at `/_next/data/{buildId}/...json`. The build id comes from the homepage HTML and is reused while it is under 30 minutes old. The saved id can remain in memory after that, but it is not returned. See [Next.js read routes](next-data-read.md).
 
-`skool_community_labels`, `skool_posts_create`, `skool_posts_comment`, `skool_posts_upload_video`, and `skool_courses_list` when a group id is passed call `https://api2.skool.com`. That host is fixed in code. It does not follow `baseUrl`. The video upload also PUTs file bytes to the pre-signed upload URL Skool returns, without the cookie header. See [api2 writes](api2-write.md).
+`skool_community_labels`, `skool_posts_create`, `skool_posts_comment`, `skool_posts_upload_video`, and `skool_courses_list` when a group id is passed call `https://api2.skool.com`. That host is fixed in code. It does not follow `baseUrl`. Image and video uploads also PUT file bytes to the pre-signed upload URL Skool returns, without the cookie header. See [api2 writes](api2-write.md).
 
 `skool_members_approve` and `skool_members_reject` POST to guessed `api2` paths through the raw fetch, which returns the status instead of throwing on its own. See [Membership decisions](membership-decision.md).
 
@@ -84,6 +85,6 @@ Every client function sends the same Chrome 131 User-Agent string and the cookie
 
 ## What this map does not verify
 
-Mocked-HTTP tests for the comment and video payloads are in `tests/posts.test.ts` (`npm test`); they make no live calls. This map's live evidence is limited to the read-only checks recorded in [api2 writes](api2-write.md). Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. Those notes are unverified here. The code reacts to HTTP status, to whether a body parses, to a truthy `pageProps` on the Next.js reads, and to a `buildId` regular expression on the homepage. It does not interpret those upstream notes.
+Mocked-HTTP tests for comment, video, and image posts are in `tests/posts.test.ts` (`npm test`); they make no live calls. This map's live evidence is limited to the read-only checks recorded in [api2 writes](api2-write.md). Response shapes in `API-DISCOVERY.md`, the README claim that the auth cookie lasts about a year, and the README claim that CloudFront returns 403 without a User-Agent are upstream notes. Those notes are unverified here. The code reacts to HTTP status, to whether a body parses, to a truthy `pageProps` on the Next.js reads, and to a `buildId` regular expression on the homepage. It does not interpret those upstream notes.
 
 `SPEC.md` says the server should return clear errors when auth fails. The code has no branch that recognizes an auth failure. A 401 or 403 is the same as any other non-ok status on the helpers that throw, and it is just another status line on the helpers that do not.

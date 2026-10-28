@@ -78,10 +78,11 @@ export async function api2Request(
     method?: string;
     body?: unknown;
     queryParams?: Record<string, string>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<unknown> {
   const config = await loadConfig();
-  const { method = "GET", body, queryParams } = options;
+  const { method = "GET", body, queryParams, signal } = options;
 
   const url = new URL(path, "https://api2.skool.com");
   if (queryParams) {
@@ -106,6 +107,7 @@ export async function api2Request(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
 
   const text = await res.text();
@@ -128,16 +130,17 @@ export async function putBinary(
   body: Uint8Array | ReadableStream,
   contentType: string,
   contentLength: number,
+  extraHeaders: Record<string, string> = {},
 ): Promise<void> {
   const res = await fetch(url, {
     method: "PUT",
-    headers: { "Content-Type": contentType, "Content-Length": String(contentLength) },
+    headers: { "Content-Type": contentType, "Content-Length": String(contentLength), ...extraHeaders },
     body: body as BodyInit,
     duplex: "half",
   } as RequestInit);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Video upload failed: ${res.status} ${res.statusText} — ${body.slice(0, 500)}`);
+    throw new Error(`Upload failed: ${res.status} ${res.statusText} - ${body.slice(0, 500)}`);
   }
 }
 

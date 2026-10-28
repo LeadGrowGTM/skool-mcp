@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nextDataRequest, api2Request } from "../client.js";
 import { loadConfig } from "../config.js";
+import { assertImageCount, prepareImage, uploadImage, type ImageStatus, type PreparedImage } from "./images.js";
 import { assertVideoCount, normalizeVideoLinks } from "./videos.js";
 
 export interface PostVideoOptions {
@@ -129,13 +130,14 @@ export const postsGetTool = {
 export const postsCreateTool = {
   name: "skool_posts_create",
   description:
-    "Create a new post in a community. Requires auth cookies. Posts to api2.skool.com. Attach an uploaded video with videoIds (from skool_posts_upload_video) or an external video with videoLink/videoLinks (YouTube, Vimeo, Loom, or Wistia).",
+    "Create a new post in a community. Requires auth cookies. Posts to api2.skool.com. Attach local images with images (each is uploaded to the group, then attached). Attach an uploaded video with videoIds (from skool_posts_upload_video) or an external video with videoLink/videoLinks (YouTube, Vimeo, Loom, or Wistia).",
   inputSchema: {
     groupId: z.string().describe("The group UUID"),
     title: z.string().describe("Post title"),
     content: z.string().describe("Post body content"),
     label: z.string().optional().describe("Category label UUID"),
     attachmentIds: z.array(z.string()).optional().describe("Uploaded file ids to attach (from the /files upload flow)"),
+    images: z.array(z.string()).optional().describe("Local image file paths (.png, .jpg, .jpeg, .gif, .webp; at most 10) to upload and attach to the post"),
     videoIds: z.array(z.string()).optional().describe("Uploaded video ids from skool_posts_upload_video"),
     videoLink: z.string().optional().describe("One YouTube, Vimeo, Loom, or Wistia URL"),
     videoLinks: z.array(z.string()).optional().describe("YouTube, Vimeo, Loom, or Wistia URLs"),
@@ -146,16 +148,35 @@ export const postsCreateTool = {
     content: string;
     label?: string;
     attachmentIds?: string[];
+    images?: string[];
     videoIds?: string[];
     videoLink?: string;
     videoLinks?: string[];
   }) {
-    const result = await api2Request("/posts?notify=false&follow=true", {
-      method: "POST",
-      body: buildCreatePayload(args),
-    });
+    const images = args.images ?? [];
+    if (args.images !== undefined) assertImageCount((args.attachmentIds?.length ?? 0) + images.length);
+    // Validate the rest of the payload before uploading anything.
+    buildCreatePayload(args);
+    const prepared: PreparedImage[] = [];
+    try {
+      for (const image of images) prepared.push(await prepareImage(image));
+      const uploaded: string[] = [];
+      const imageStatuses: { fileId: string; path: string; status: ImageStatus }[] = [];
+      for (const [index, image] of prepared.entries()) {
+        const { fileId, status } = await uploadImage(args.groupId, image);
+        uploaded.push(fileId);
+        imageStatuses.push({ fileId, path: images[index], status });
+      }
 
-    return JSON.stringify(result, null, 2);
+      const result = await api2Request("/posts?notify=false&follow=true", {
+        method: "POST",
+        body: buildCreatePayload({ ...args, attachmentIds: [...(args.attachmentIds ?? []), ...uploaded] }),
+      });
+
+      return JSON.stringify(images.length ? { post: result, imageStatuses } : result, null, 2);
+    } finally {
+      await Promise.all(prepared.map((image) => image.handle.close()));
+    }
   },
 };
 

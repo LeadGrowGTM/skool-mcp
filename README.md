@@ -78,7 +78,7 @@ Uses session cookies from an authenticated Skool session. The `auth_token` JWT i
 ### Posts
 - `skool.posts.list` — List posts in a community (with category filter, pagination)
 - `skool.posts.get` — Get a specific post with comments
-- `skool.posts.create` — Create a new post. Attach files with `attachmentIds`, an uploaded video with `videoIds`, or an external video with `videoLink`/`videoLinks` (YouTube, Vimeo, Loom, or Wistia; at most 10 videos total)
+- `skool.posts.create` - Create a new post. Attach local images with `images` (file paths: png, jpg, jpeg, gif, webp; each is uploaded to the group, then attached), other files with `attachmentIds`, an uploaded video with `videoIds`, or an external video with `videoLink`/`videoLinks` (YouTube, Vimeo, Loom, or Wistia; at most 10 videos total). When `images` is passed, the combined count of images and `attachmentIds` is capped at 10; without `images`, `attachmentIds` have no new cap. Posts created with images return `imageStatuses` with a file id, path, and `processed`, `stillProcessing`, or `statusUnknown` status for each image.
 - `skool.posts.comment` — Comment on a post (also accepts `videoIds`/`videoLink`/`videoLinks`)
 - `skool_posts_upload_video` — Upload a local video file (under 30GB) and return its video id for `videoIds`
 

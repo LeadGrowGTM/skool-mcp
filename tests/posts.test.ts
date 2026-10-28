@@ -25,7 +25,7 @@ before(async () => {
   videos = await import("../src/tools/videos.ts");
 });
 
-function mockFetch(responder: (call: Call) => Response) {
+function mockFetch(responder: (call: Call, options: Record<string, unknown>) => Response | Promise<Response>) {
   calls = [];
   globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
     const body =
@@ -37,8 +37,18 @@ function mockFetch(responder: (call: Call) => Response) {
       headers: (opts.headers ?? {}) as Record<string, string>,
     };
     calls.push(call);
-    return responder(call);
+    return responder(call, opts);
   }) as typeof fetch;
+}
+
+function drainUploads(): Buffer[] {
+  const sent: Buffer[] = [];
+  const inner = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
+    if (opts.body instanceof ReadableStream) sent.push(Buffer.from(await new Response(opts.body).arrayBuffer()));
+    return inner(url as string, opts);
+  }) as typeof fetch;
+  return sent;
 }
 
 function jsonOk(obj: unknown): Response {
@@ -199,4 +209,209 @@ test("video size limit is under 30GB with a clear error", () => {
   assert.throws(() => videos.assertVideoSize(videos.MAX_VIDEO_BYTES), /too large.*under 30GB/);
   assert.throws(() => videos.assertVideoSize(videos.MAX_VIDEO_BYTES + 1), /too large/);
   assert.doesNotThrow(() => videos.assertVideoSize(videos.MAX_VIDEO_BYTES - 1));
+});
+
+function filesResponder(call: Call): Response {
+  if (call.url === "https://api2.skool.com/files" && call.method === "POST") {
+    const n = (call.body as { file_name: string }).file_name;
+    return jsonOk({
+      file: { id: `file-${n}` },
+      write_url: `https://s3.example.test/put/${n}`,
+      acl: "public-read",
+      content_type: "image/png",
+      wait_token: "w",
+    });
+  }
+  if (call.url.startsWith("https://api2.skool.com/files?ids=")) {
+    return jsonOk({ files: [{ postprocessed_at: "2026-10-28T00:00:00Z", metadata: { read_url: "https://assets.example.test/x" } }] });
+  }
+  if (call.url.startsWith("https://api2.skool.com/posts")) return jsonOk({ id: "post-1" });
+  return new Response("", { status: 200 });
+}
+
+test("create post uploads each image via /files and attaches the ids", async () => {
+  const a = join(home, "a.png");
+  const b = join(home, "b.JPG");
+  writeFileSync(a, Buffer.from([1, 2, 3]));
+  writeFileSync(b, Buffer.from([4, 5]));
+  mockFetch(filesResponder);
+  const sent = drainUploads();
+  const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
+  assert.deepEqual(JSON.parse(output), {
+    post: { id: "post-1" },
+    imageStatuses: [
+      { fileId: "file-a.png", path: a, status: "processed" },
+      { fileId: "file-b.JPG", path: b, status: "processed" },
+    ],
+  });
+
+  const reg = calls.filter((c) => c.url === "https://api2.skool.com/files");
+  assert.equal(reg.length, 2);
+  assert.deepEqual(reg[0].body, {
+    file_name: "a.png",
+    content_type: "image/png",
+    content_length: 3,
+    content_disposition: "",
+    ref: "",
+    owner_id: GROUP,
+    large_thumbnail: false,
+  });
+  assert.equal((reg[1].body as { content_type: string }).content_type, "image/jpeg");
+
+  const puts = calls.filter((c) => c.method === "PUT");
+  assert.equal(puts.length, 2);
+  assert.equal(puts[0].url, "https://s3.example.test/put/a.png");
+  assert.equal(puts[0].headers["x-amz-acl"], "public-read");
+  assert.equal(puts[0].headers["Content-Type"], "image/png");
+  assert.equal(puts[0].headers.Cookie, undefined);
+  assert.deepEqual(sent.map((bytes) => [...bytes]), [[1, 2, 3], [4, 5]]);
+
+  const create = calls[calls.length - 1];
+  assert.equal(create.url, "https://api2.skool.com/posts?notify=false&follow=true");
+  const meta = (create.body as { metadata: Record<string, unknown> }).metadata;
+  assert.equal(meta.attachments, "existing,file-a.png,file-b.JPG");
+  // Post is created only after every upload finished.
+  assert.equal(calls.indexOf(create), calls.length - 1);
+});
+
+test("create post reports images still processing after the poll limit", async () => {
+  const image = join(home, "slow.png");
+  writeFileSync(image, Buffer.from([1, 2, 3]));
+  mockFetch((call) => {
+    if (call.url.startsWith("https://api2.skool.com/files?ids=")) return jsonOk({ files: [{}] });
+    return filesResponder(call);
+  });
+  drainUploads();
+  const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+
+  assert.deepEqual(JSON.parse(output), {
+    post: { id: "post-1" },
+    imageStatuses: [{ fileId: "file-slow.png", path: image, status: "stillProcessing" }],
+  });
+  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 15);
+  const create = calls[calls.length - 1];
+  assert.equal(create.url, "https://api2.skool.com/posts?notify=false&follow=true");
+  assert.equal((create.body as { metadata: { attachments: string } }).metadata.attachments, "file-slow.png");
+});
+
+test("unavailable image status still creates the post and reports status unknown", async () => {
+  const scenarios = [
+    { name: "http-error", response: () => new Response("status unavailable", { status: 500 }) },
+    { name: "empty", response: () => jsonOk({ files: [] }) },
+  ];
+  for (const scenario of scenarios) {
+    const image = join(home, `status-${scenario.name}.png`);
+    writeFileSync(image, Buffer.from([1, 2, 3]));
+    mockFetch((call) => {
+      if (call.url.startsWith("https://api2.skool.com/files?ids=")) return scenario.response();
+      return filesResponder(call);
+    });
+    drainUploads();
+    const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+    assert.deepEqual(JSON.parse(output), {
+      post: { id: "post-1" },
+      imageStatuses: [{ fileId: `file-status-${scenario.name}.png`, path: image, status: "statusUnknown" }],
+    });
+    assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 1);
+    assert.equal(calls[calls.length - 1].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  }
+});
+
+test("pending image status fetches and bodies time out without blocking posts", async () => {
+  for (const stage of ["fetch", "body"] as const) {
+    const image = join(home, `pending-${stage}.png`);
+    writeFileSync(image, Buffer.from([1, 2, 3]));
+    let aborted = false;
+    mockFetch((call, options) => {
+      if (!call.url.startsWith("https://api2.skool.com/files?ids=")) return filesResponder(call);
+      const signal = options.signal as AbortSignal | undefined;
+      const pending = (fail: (error: unknown) => void) => {
+        const safety = setTimeout(() => fail(new Error("status request did not abort")), 2500);
+        const onAbort = () => {
+          aborted = true;
+          clearTimeout(safety);
+          fail(signal?.reason);
+        };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      };
+      if (stage === "fetch") return new Promise<Response>((_, reject) => pending(reject));
+      return new Response(new ReadableStream({ start(controller) { pending((error) => controller.error(error)); } }));
+    });
+    drainUploads();
+    const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+    assert.equal(aborted, true);
+    assert.deepEqual(JSON.parse(output), {
+      post: { id: "post-1" },
+      imageStatuses: [{ fileId: `file-pending-${stage}.png`, path: image, status: "statusUnknown" }],
+    });
+    assert.equal(calls[calls.length - 1].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  }
+});
+
+test("create post permits 11 existing attachment ids without images", async () => {
+  const attachmentIds = Array.from({ length: 11 }, (_, i) => `existing-${i}`);
+  mockFetch(filesResponder);
+  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", attachmentIds });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api2.skool.com/posts?notify=false&follow=true");
+  assert.equal((calls[0].body as { metadata: { attachments: string } }).metadata.attachments, attachmentIds.join(","));
+});
+
+test("images plus attachment ids over 10 are rejected before any HTTP call", async () => {
+  mockFetch(filesResponder);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({
+      groupId: GROUP,
+      title: "T",
+      content: "C",
+      images: [join(home, "not-created.png")],
+      attachmentIds: Array.from({ length: 10 }, (_, i) => `existing-${i}`),
+    }),
+    /at most 10 images/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("create post without images makes no /files calls", async () => {
+  mockFetch(filesResponder);
+  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api2.skool.com/posts?notify=false&follow=true");
+});
+
+test("bad image inputs are rejected before any HTTP call", async () => {
+  mockFetch(filesResponder);
+  const txt = join(home, "doc.txt");
+  writeFileSync(txt, "x");
+  await assert.rejects(() => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [txt] }), /Cannot determine image content type/);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: Array.from({ length: 11 }, () => "x.png") }),
+    /at most 10 images/,
+  );
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [join(home, "a.png")], videoLink: "https://example.com/v" }),
+    /Unsupported video link/,
+  );
+  const empty = join(home, "empty.png");
+  writeFileSync(empty, "");
+  await assert.rejects(() => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [empty] }), /Image file is empty/);
+  assert.equal(calls.length, 0);
+});
+
+test("all images are checked before the first upload", async () => {
+  const valid = join(home, "preflight-valid.png");
+  const empty = join(home, "preflight-empty.png");
+  writeFileSync(valid, Buffer.from([1]));
+  writeFileSync(empty, "");
+  mockFetch(filesResponder);
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [valid, empty] }),
+    /Image file is empty/,
+  );
+  await assert.rejects(
+    () => posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [valid, join(home, "preflight-missing.png")] }),
+    /Image file not found or not readable/,
+  );
+  assert.equal(calls.length, 0);
 });

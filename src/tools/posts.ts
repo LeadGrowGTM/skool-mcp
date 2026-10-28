@@ -161,14 +161,19 @@ export const postsCreateTool = {
     try {
       for (const image of images) prepared.push(await prepareImage(image));
       const uploaded: string[] = [];
-      for (const image of prepared) uploaded.push(await uploadImage(args.groupId, image));
+      const stillProcessing: { fileId: string; path: string }[] = [];
+      for (const [index, image] of prepared.entries()) {
+        const { fileId, processed } = await uploadImage(args.groupId, image);
+        uploaded.push(fileId);
+        if (!processed) stillProcessing.push({ fileId, path: images[index] });
+      }
 
       const result = await api2Request("/posts?notify=false&follow=true", {
         method: "POST",
         body: buildCreatePayload({ ...args, attachmentIds: [...(args.attachmentIds ?? []), ...uploaded] }),
       });
 
-      return JSON.stringify(result, null, 2);
+      return JSON.stringify(images.length ? { post: result, stillProcessing } : result, null, 2);
     } finally {
       await Promise.all(prepared.map((image) => image.handle.close()));
     }

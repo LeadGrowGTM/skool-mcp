@@ -54,16 +54,16 @@ export function parseCreatedFile(result: unknown): CreatedFile {
   };
 }
 
-async function waitForFile(fileId: string): Promise<void> {
+async function waitForFile(fileId: string): Promise<boolean> {
   for (let i = 0; i < POLL_ATTEMPTS; i++) {
-    const res = (await api2Request("/files", { queryParams: { ids: fileId } })) as {
+    const res = (await api2Request("/files", { queryParams: { ids: fileId } }).catch(() => null)) as {
       files?: { postprocessed_at?: unknown; metadata?: { read_url?: unknown } }[];
-    };
+    } | null;
     const file = res?.files?.[0];
-    if (file?.postprocessed_at && file.metadata?.read_url) return;
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    if (file?.postprocessed_at && file.metadata?.read_url) return true;
+    if (i < POLL_ATTEMPTS - 1) await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  throw new Error(`Image ${fileId} was uploaded but Skool did not finish processing it in time`);
+  return false;
 }
 
 export interface PreparedImage {
@@ -94,7 +94,7 @@ export async function prepareImage(filePath: string): Promise<PreparedImage> {
  * Upload one local image to Skool's file store (owned by the group) and return its file id.
  * The file is not attached to anything until a post is created with it.
  */
-export async function uploadImage(groupId: string, image: PreparedImage): Promise<string> {
+export async function uploadImage(groupId: string, image: PreparedImage): Promise<{ fileId: string; processed: boolean }> {
   const created = parseCreatedFile(
     await api2Request("/files", {
       method: "POST",
@@ -113,6 +113,6 @@ export async function uploadImage(groupId: string, image: PreparedImage): Promis
   const headers: Record<string, string> = created.acl ? { "x-amz-acl": created.acl } : {};
   const stream = image.handle.createReadStream({ autoClose: false });
   await putBinary(created.writeUrl, Readable.toWeb(stream) as ReadableStream, created.contentType || image.contentType, image.size, headers);
-  await waitForFile(created.fileId);
-  return created.fileId;
+  const processed = await waitForFile(created.fileId);
+  return { fileId: created.fileId, processed };
 }

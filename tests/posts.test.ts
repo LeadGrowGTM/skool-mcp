@@ -41,6 +41,16 @@ function mockFetch(responder: (call: Call) => Response) {
   }) as typeof fetch;
 }
 
+function drainUploads(): Buffer[] {
+  const sent: Buffer[] = [];
+  const inner = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
+    if (opts.body instanceof ReadableStream) sent.push(Buffer.from(await new Response(opts.body).arrayBuffer()));
+    return inner(url as string, opts);
+  }) as typeof fetch;
+  return sent;
+}
+
 function jsonOk(obj: unknown): Response {
   return new Response(JSON.stringify(obj), {
     status: 200,
@@ -225,13 +235,9 @@ test("create post uploads each image via /files and attaches the ids", async () 
   writeFileSync(a, Buffer.from([1, 2, 3]));
   writeFileSync(b, Buffer.from([4, 5]));
   mockFetch(filesResponder);
-  const sent: Buffer[] = [];
-  const inner = globalThis.fetch;
-  globalThis.fetch = (async (url: unknown, opts: Record<string, unknown> = {}) => {
-    if (opts.body instanceof ReadableStream) sent.push(Buffer.from(await new Response(opts.body).arrayBuffer()));
-    return inner(url as string, opts);
-  }) as typeof fetch;
-  await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
+  const sent = drainUploads();
+  const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [a, b], attachmentIds: ["existing"] });
+  assert.deepEqual(JSON.parse(output), { post: { id: "post-1" }, stillProcessing: [] });
 
   const reg = calls.filter((c) => c.url === "https://api2.skool.com/files");
   assert.equal(reg.length, 2);
@@ -260,6 +266,26 @@ test("create post uploads each image via /files and attaches the ids", async () 
   assert.equal(meta.attachments, "existing,file-a.png,file-b.JPG");
   // Post is created only after every upload finished.
   assert.equal(calls.indexOf(create), calls.length - 1);
+});
+
+test("create post reports images still processing after the poll limit", async () => {
+  const image = join(home, "slow.png");
+  writeFileSync(image, Buffer.from([1, 2, 3]));
+  mockFetch((call) => {
+    if (call.url.startsWith("https://api2.skool.com/files?ids=")) return jsonOk({ files: [{}] });
+    return filesResponder(call);
+  });
+  drainUploads();
+  const output = await posts.postsCreateTool.handler({ groupId: GROUP, title: "T", content: "C", images: [image] });
+
+  assert.deepEqual(JSON.parse(output), {
+    post: { id: "post-1" },
+    stillProcessing: [{ fileId: "file-slow.png", path: image }],
+  });
+  assert.equal(calls.filter((call) => call.url.startsWith("https://api2.skool.com/files?ids=")).length, 15);
+  const create = calls[calls.length - 1];
+  assert.equal(create.url, "https://api2.skool.com/posts?notify=false&follow=true");
+  assert.equal((create.body as { metadata: { attachments: string } }).metadata.attachments, "file-slow.png");
 });
 
 test("create post permits 11 existing attachment ids without images", async () => {

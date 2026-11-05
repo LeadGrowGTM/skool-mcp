@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { open, stat } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { open, stat, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setLessonVideo, assertLessonId } from "./classroom.js";
 import { basename, extname } from "node:path";
-import { api2Request, putBinary } from "../client.js";
+import { api2Request, putFileBinary } from "../client.js";
 
 /** Skool web client limit for post/comment videos: size must be under 30 GB. */
 export const MAX_VIDEO_BYTES = 32212254720; // 30 * 1024^3
@@ -110,70 +112,84 @@ export function parseCreatedVideo(result: unknown): CreatedVideo {
   return { videoId, uploadUrl };
 }
 
-export const postsUploadVideoTool = {
-  name: "skool_posts_upload_video",
-  description:
-    "Upload a local video file to Skool (Mux) for a group and return its video id. Pass the id in skool_posts_create videoIds to attach it to a post. The file must be under 30GB. This creates an upload on Skool; processing may still be in progress when it returns.",
+export interface UploadVideoArgs {
+  groupId: string;
+  filePath?: string;
+  sourceUrl?: string;
+  fileName?: string;
+  contentType?: string;
+  referenceType?: string;
+  lessonId?: string;
+}
+
+export const uploadVideoTool = {
+  name: "skool_upload_video",
+  description: "Upload a local or HTTP(S) video under 30GB. lessonId implies module and attaches the video using a full lesson update. module is an unproven lesson reference value.",
   inputSchema: {
-    groupId: z.string().describe("The group UUID"),
-    filePath: z.string().describe("Local path to the video file"),
-    fileName: z.string().optional().describe("File name to register on Skool (defaults to the file's base name)"),
-    contentType: z.string().optional().describe("Video MIME type (inferred from extension if omitted)"),
-    referenceType: z.enum(["post", "comment"]).default("post").describe("What the video will be attached to"),
+    groupId: z.string().min(1),
+    filePath: z.string().optional(),
+    sourceUrl: z.string().optional(),
+    fileName: z.string().optional(),
+    contentType: z.string().optional(),
+    referenceType: z.enum(["post", "comment", "module"]).default("post"),
+    lessonId: z.string().regex(/^[a-fA-F0-9]{32}$/).optional(),
   },
-  async handler(args: {
-    groupId: string;
-    filePath: string;
-    fileName?: string;
-    contentType?: string;
-    referenceType: string;
-  }) {
-    const fileName = args.fileName || basename(args.filePath);
-    const contentType = resolveVideoContentType(fileName, args.contentType);
-
-    const info = await stat(args.filePath).catch(() => {
-      throw new Error(`Video file not found: ${args.filePath}`);
-    });
-    if (!info.isFile()) throw new Error(`Video path is not a file: ${args.filePath}`);
-    assertVideoSize(info.size);
-
-    let videoId = "";
-    const handle = await open(args.filePath, "r").catch(() => {
-      throw new Error(`Video file is not readable: ${args.filePath}`);
-    });
-
-    try {
-      const created = parseCreatedVideo(
-        await api2Request("/videos", {
-          method: "POST",
-          body: {
-            group_id: args.groupId,
-            file_name: fileName,
-            content_type: contentType,
-            content_length: info.size,
-            reference_type: args.referenceType,
-          },
-        }),
-      );
-
-      const stream = handle.createReadStream({ autoClose: false });
-      await putBinary(created.uploadUrl, Readable.toWeb(stream) as ReadableStream, contentType, info.size);
-      videoId = created.videoId;
-    } finally {
-      await handle.close();
+  async handler(args: UploadVideoArgs) {
+    if (Boolean(args.filePath) === Boolean(args.sourceUrl)) throw new Error("Provide exactly one of filePath or sourceUrl");
+    if (!args.groupId) throw new Error("groupId is required");
+    if (args.lessonId !== undefined) assertLessonId(args.lessonId);
+    if (args.referenceType && !["post", "comment", "module"].includes(args.referenceType)) throw new Error("Invalid referenceType");
+    let source: URL | undefined;
+    if (args.sourceUrl) {
+      try { source = new URL(args.sourceUrl); } catch { throw new Error("sourceUrl must be an http(s) URL"); }
+      if (!["http:", "https:"].includes(source.protocol) || source.username || source.password) throw new Error("sourceUrl must be an http(s) URL without credentials");
     }
-
-    return JSON.stringify(
-      {
-        videoId,
-        fileName,
-        contentType,
-        contentLength: info.size,
-        referenceType: args.referenceType,
-        uploaded: true,
-      },
-      null,
-      2,
-    );
+    const fileName = args.fileName || basename(source ? source.pathname : args.filePath!);
+    if (!VIDEO_CONTENT_TYPES[extname(fileName).toLowerCase()]) throw new Error("Cannot determine video content type: unsupported video extension");
+    const contentType = resolveVideoContentType(fileName, args.contentType);
+    const referenceType = args.lessonId ? "module" : args.referenceType ?? "post";
+    let temp: string | undefined;
+    let filePath = args.filePath!;
+    try {
+      if (source) {
+        const response = await fetch(source, { credentials: "omit" });
+        if (!response.ok || !response.body) throw new Error("Video source download failed");
+        const declared = response.headers.get("content-length");
+        if (declared !== null) {
+          try { assertVideoSize(Number(declared)); } catch (error) { await response.body.cancel(); throw error; }
+        }
+        temp = await mkdtemp(join(tmpdir(), "skool-video-"));
+        filePath = join(temp, "video");
+        const output = await open(filePath, "w");
+        let size = 0;
+        try {
+          for await (const chunk of response.body) {
+            size += chunk.length;
+            assertVideoSize(size);
+            await output.writeFile(chunk);
+          }
+        } finally { await output.close(); }
+        if (declared !== null && size !== Number(declared)) throw new Error("Video source length mismatch");
+      }
+      const info = await stat(filePath).catch(() => { throw new Error("Video file not found"); });
+      if (!info.isFile()) throw new Error("Video path is not a file");
+      assertVideoSize(info.size);
+      const handle = await open(filePath, "r");
+      let videoId: string;
+      try {
+        const created = parseCreatedVideo(await api2Request("/videos", { method: "POST", body: {
+          group_id: args.groupId, file_name: fileName, content_type: contentType,
+          content_length: info.size, reference_type: referenceType,
+        } }));
+        await putFileBinary(created.uploadUrl, handle, contentType, info.size);
+        videoId = created.videoId;
+      } finally { await handle.close(); }
+      if (args.lessonId) await setLessonVideo({ lessonId: args.lessonId, videoId });
+      return JSON.stringify({ videoId, fileName, contentType, contentLength: info.size,
+        referenceType, uploaded: true, ...(args.lessonId ? { lessonAttached: true } : {}) }, null, 2);
+    } finally { if (temp) await rm(temp, { recursive: true, force: true }); }
   },
 };
+
+/** Backwards-compatible wrapper using the same validation and upload implementation. */
+export const postsUploadVideoTool = { ...uploadVideoTool, name: "skool_posts_upload_video" };

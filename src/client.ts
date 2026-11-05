@@ -1,3 +1,5 @@
+import type { FileHandle } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { loadConfig, type SkoolConfig } from "./config.js";
 
 const USER_AGENT =
@@ -139,8 +141,7 @@ export async function putBinary(
     duplex: "half",
   } as RequestInit);
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Upload failed: ${res.status} ${res.statusText} - ${body.slice(0, 500)}`);
+    throw new Error(`Upload failed: ${res.status}`);
   }
 }
 
@@ -176,4 +177,40 @@ export async function rawRequest(
 
   const text = await res.text();
   return { status: res.status, headers: responseHeaders, body: text };
+}
+
+/** Files above 8 MiB use resumable 8 MiB chunks; each failed chunk gets three retries.
+ * 308 acknowledges an intermediate chunk. Only the final chunk may complete with 2xx.
+ */
+export const VIDEO_CHUNK_BYTES = 8 * 1024 * 1024;
+export const VIDEO_CHUNK_THRESHOLD = VIDEO_CHUNK_BYTES;
+export async function putFileBinary(url: string, file: FileHandle, contentType: string, size: number): Promise<void> {
+  if (size <= VIDEO_CHUNK_THRESHOLD) {
+    const stream = file.createReadStream({ autoClose: false });
+    try { await putBinary(url, Readable.toWeb(stream) as ReadableStream, contentType, size); }
+    finally { stream.destroy(); }
+    return;
+  }
+  for (let start = 0; start < size; start += VIDEO_CHUNK_BYTES) {
+    const length = Math.min(VIDEO_CHUNK_BYTES, size - start);
+    const bytes = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const result = await file.read(bytes, read, length - read, start + read);
+      if (!result.bytesRead) throw new Error("Video file changed during upload");
+      read += result.bytesRead;
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await fetch(url, { method: "PUT", headers: {
+          "Content-Type": contentType, "Content-Length": String(length),
+          "Content-Range": `bytes ${start}-${start + length - 1}/${size}`,
+        }, body: bytes, redirect: "manual" });
+        const intermediate = start + length < size;
+        if (!(intermediate ? response.status === 308 : response.ok)) throw new Error("Video chunk upload failed");
+        await response.body?.cancel();
+        break;
+      } catch { if (attempt === 3) throw new Error("Video chunk upload failed after three retries"); }
+    }
+  }
 }

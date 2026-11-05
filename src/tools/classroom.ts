@@ -56,3 +56,40 @@ export const lessonsListTool = {
     return JSON.stringify(props, null, 2);
   },
 };
+
+export function assertLessonId(id: string): void {
+  if (!/^[a-fA-F0-9]{32}$/.test(id)) throw new Error("lessonId must be 32 hexadecimal characters");
+}
+
+export async function setLessonVideo(args: { lessonId: string; videoId: string; videoLink?: string }): Promise<unknown> {
+  assertLessonId(args.lessonId);
+  if (!args.videoId.trim()) throw new Error("videoId is required");
+  if (args.videoLink !== undefined) {
+    let url: URL;
+    try { url = new URL(args.videoLink); } catch { throw new Error("Invalid videoLink"); }
+    if (!["https:", "http:"].includes(url.protocol)) throw new Error("Invalid videoLink");
+  }
+  const response = await api2Request(`/courses/${args.lessonId}`) as Record<string, unknown>;
+  const lesson = (response?.course ?? response?.data ?? response) as Record<string, unknown>;
+  // Fail closed: never issue a partial PUT when the read lacks required lesson state.
+  const fields = ["title", "desc", "resources", "transcript", "privacy", "min_tier", "state"];
+  if (!lesson || fields.some(key => !Object.prototype.hasOwnProperty.call(lesson, key))) {
+    throw new Error("Lesson read is missing fields required for a full update");
+  }
+  return api2Request(`/courses/${args.lessonId}`, { method: "PUT", body: {
+    ...lesson, video_id: args.videoId, ...(args.videoLink !== undefined ? { video_link: args.videoLink } : {}),
+  } });
+}
+
+export const lessonsSetVideoTool = {
+  name: "skool_lessons_set_video",
+  description: "Read a lesson and set its video with a full PUT preserving privacy and lesson state.",
+  inputSchema: {
+    lessonId: z.string().regex(/^[a-fA-F0-9]{32}$/),
+    videoId: z.string().min(1),
+    videoLink: z.string().optional(),
+  },
+  async handler(args: { lessonId: string; videoId: string; videoLink?: string }) {
+    return JSON.stringify(await setLessonVideo(args), null, 2);
+  },
+};

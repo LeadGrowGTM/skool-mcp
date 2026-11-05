@@ -7,8 +7,8 @@ import { requestTool } from "./tools/request.js";
 import { communityInfoTool, communityLabelsTool } from "./tools/community.js";
 import { membersListTool, membersPendingTool, membersApproveTool, membersRejectTool } from "./tools/members.js";
 import { postsListTool, postsGetTool, postsCreateTool, postsCommentTool } from "./tools/posts.js";
-import { postsUploadVideoTool } from "./tools/videos.js";
-import { coursesListTool, lessonsListTool } from "./tools/classroom.js";
+import { postsUploadVideoTool, uploadVideoTool } from "./tools/videos.js";
+import { coursesListTool, lessonsListTool, lessonsSetVideoTool } from "./tools/classroom.js";
 import { notificationsTool } from "./tools/notifications.js";
 import { chatChannelsTool, chatMessagesTool } from "./tools/chat.js";
 import { payoutsTool, revenueTool } from "./tools/billing.js";
@@ -152,6 +152,11 @@ for (const t of [payoutsTool, revenueTool]) {
     content: [{ type: "text", text: await (t.handler as (a: any) => Promise<string>)(args) }],
   }));
 }
+
+server.tool(uploadVideoTool.name, uploadVideoTool.description, uploadVideoTool.inputSchema,
+  async args => ({ content: [{ type: "text", text: await uploadVideoTool.handler(args) }] }));
+server.tool(lessonsSetVideoTool.name, lessonsSetVideoTool.description, lessonsSetVideoTool.inputSchema,
+  async args => ({ content: [{ type: "text", text: await lessonsSetVideoTool.handler(args) }] }));
 
 // Start the server
 async function main() {

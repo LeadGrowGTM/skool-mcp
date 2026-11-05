@@ -176,3 +176,35 @@ Returns "invalid metadata" — needs correct field set. Look at network tab when
 - Stored as `auth_token` httpOnly cookie on `.skool.com`
 - Current token expires 2027 (long-lived!)
 - Config location: `~/.config/skool-mcp/config.json`
+
+
+### Classroom video upload
+
+`skool_upload_video` accepts `groupId` and exactly one of `filePath` or
+`sourceUrl` (HTTP(S)), plus optional `fileName`, `contentType`, `referenceType`
+(`post` by default, `comment`, or `module`) and `lessonId` (32 hex characters).
+`skool_posts_upload_video` remains a compatible wrapper. Supported extensions:
+mp4, m4v, mov, webm, avi, mkv; files must be non-empty and strictly under
+32212254720 bytes (30 GiB). Local validation precedes HTTP; remote size is
+validated during download before any Skool API call. Remote downloads send no
+Skool cookies and spool to a temporary file, including when Content-Length is
+missing. Temporary files are removed on success and failure.
+
+The tool POSTs `/videos`, then PUTs bytes to the returned upload URL without
+cookies. Files up to 8 MiB use one PUT; larger files use sequential 8 MiB chunks
+with Content-Range and up to three retries per failed chunk. Intermediate chunks
+must return 308; the final chunk must return 2xx. This resumable protocol is
+mock-tested only; no live upload was performed, and restart across tool calls is
+not supported. Returns `videoId`, `fileName`, `contentType`, `contentLength`,
+`referenceType`, `uploaded: true`, and `lessonAttached: true` after attachment.
+Processing may still be underway.
+
+`lessonId` implies `referenceType: module` and attaches after upload.
+**The `module` reference value is unproven for lessons.**
+`skool_lessons_set_video { lessonId, videoId, videoLink? }` also attaches an
+existing video: GET `/courses/{lessonId}`, then PUT the merged full lesson to
+that same endpoint with `video_id` (and optional `video_link`). It preserves all
+read fields, including title, desc, resources, transcript, privacy, min_tier and
+state, and refuses the write if any required preservation field is absent.
+Partial PUTs can reset privacy to Open; never send one. These lesson writes are
+covered with mocked fetch only, not live API verification.

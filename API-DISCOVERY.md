@@ -176,3 +176,7 @@ Returns "invalid metadata" — needs correct field set. Look at network tab when
 - Stored as `auth_token` httpOnly cookie on `.skool.com`
 - Current token expires 2027 (long-lived!)
 - Config location: `~/.config/skool-mcp/config.json`
+
+### Comment reads
+
+The post data route can return an empty `postTree.children` even when the post has comments. The web client loads `GET /posts/{postId}/comments?group-id={groupId}&limit=25`, and uses `created-lt` with the returned `last` value for older pages. The response is snake_case: `post_tree.children`, optionally `pinned_post_tree.children`, and `last` (zero means no next page). Children may themselves contain children and videos. For a notification link's `p` prefix the web client uses `GET /posts/{postId}/comments/links/{prefix}?group-id={groupId}&limit=25`.

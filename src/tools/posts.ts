@@ -35,11 +35,12 @@ export function buildCommentPayload(args: {
   postId: string;
   groupId: string;
   content: string;
+  parentCommentId?: string;
 } & PostVideoOptions): Record<string, unknown> {
   return {
     post_type: "comment",
     group_id: args.groupId,
-    parent_id: args.postId,
+    parent_id: args.parentCommentId || args.postId,
     root_id: args.postId,
     metadata: buildPostMetadata({ content: args.content, videoIds: args.videoIds, videoLink: args.videoLink, videoLinks: args.videoLinks }),
   };
@@ -123,7 +124,37 @@ export const postsGetTool = {
     const props = data?.pageProps;
     if (!props) throw new Error("No pageProps in response");
 
-    return JSON.stringify(props, null, 2);
+    const tree = props.postTree as { post?: { id?: string; groupId?: string } } | undefined;
+    const post = tree?.post;
+    if (!post?.id || !post.groupId) throw new Error("Post id or group id missing in page response");
+    const comments = await fetchComments(post.id, post.groupId, {});
+    return JSON.stringify({ ...props, comments }, null, 2);
+  },
+};
+
+type CommentOptions = { cursor?: string; commentPrefix?: string };
+async function fetchComments(postId: string, groupId: string, opts: CommentOptions) {
+  const suffix = opts.commentPrefix ? `/links/${encodeURIComponent(opts.commentPrefix)}` : "";
+  const query: Record<string, string> = { "group-id": groupId, limit: "25" };
+  if (opts.cursor) query["created-lt"] = opts.cursor;
+  const result = await api2Request(`/posts/${encodeURIComponent(postId)}/comments${suffix}`, { queryParams: query }) as {
+    post_tree?: { children?: unknown[] }; pinned_post_tree?: { children?: unknown[] }; last?: number | string;
+  };
+  return { children: result.post_tree?.children ?? [], pinned: result.pinned_post_tree?.children ?? [], next_cursor: result.last && Number(result.last) !== 0 ? String(result.last) : null };
+}
+
+export const postCommentsTool = {
+  name: "skool_post_comments",
+  description: "Read a page of comment trees and nested replies. Use next_cursor for older comments, or commentPrefix from a notification link's p parameter to resolve that comment.",
+  inputSchema: {
+    postId: z.string().describe("Root post UUID from skool_posts_get"),
+    groupId: z.string().describe("Group UUID from skool_posts_get"),
+    cursor: z.string().optional().describe("next_cursor from the previous page"),
+    commentPrefix: z.string().regex(/^[a-fA-F0-9]+$/).optional().describe("The p parameter from a notification link"),
+  },
+  async handler(args: { postId: string; groupId: string; cursor?: string; commentPrefix?: string }) {
+    if (args.cursor && args.commentPrefix) throw new Error("Use cursor or commentPrefix, not both");
+    return JSON.stringify(await fetchComments(args.postId, args.groupId, args), null, 2);
   },
 };
 
@@ -187,6 +218,7 @@ export const postsCommentTool = {
   inputSchema: {
     postId: z.string().describe("The post UUID to comment on"),
     groupId: z.string().describe("The group UUID"),
+    parentCommentId: z.string().optional().describe("Comment UUID to reply to; omit for a top-level comment"),
     content: z.string().describe("Comment text content"),
     videoIds: z.array(z.string()).optional().describe("Uploaded video ids from skool_posts_upload_video"),
     videoLink: z.string().optional().describe("One YouTube, Vimeo, Loom, or Wistia URL"),
@@ -196,6 +228,7 @@ export const postsCommentTool = {
     postId: string;
     groupId: string;
     content: string;
+    parentCommentId?: string;
     videoIds?: string[];
     videoLink?: string;
     videoLinks?: string[];

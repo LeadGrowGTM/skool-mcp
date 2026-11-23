@@ -9,8 +9,9 @@ export const membersListTool = {
   inputSchema: {
     community: z.string().optional().describe("Community slug. Uses default from config if omitted."),
     page: z.number().default(1).describe("Page number (1-based)"),
+    tab: z.enum(["active", "cancelling", "churned", "banned"]).optional().describe("Member tab to list"),
   },
-  async handler(args: { community?: string; page: number }) {
+  async handler(args: { community?: string; page: number; tab?: "active" | "cancelling" | "churned" | "banned" }) {
     const config = await loadConfig();
     const slug = args.community || config.defaultCommunity;
     if (!slug) throw new Error("No community specified and no defaultCommunity in config");
@@ -18,6 +19,7 @@ export const membersListTool = {
     const data = (await nextDataRequest(`/${slug}/-/members`, {
       group: slug,
       p: String(args.page),
+      ...(args.tab ? { t: args.tab } : {}),
     })) as { pageProps?: Record<string, unknown> };
 
     const props = data?.pageProps;

@@ -415,3 +415,22 @@ test("all images are checked before the first upload", async () => {
   );
   assert.equal(calls.length, 0);
 });
+
+test("reply targets the comment while keeping the post root and video id", async () => {
+  mockFetch(() => jsonOk({ id: "reply" }));
+  await posts.postsCommentTool.handler({ postId: POST, groupId: GROUP, parentCommentId: "comment-1", content: "hello", videoIds: ["v1"] });
+  const body = calls[0].body as any;
+  assert.equal(body.parent_id, "comment-1");
+  assert.equal(body.root_id, POST);
+  assert.equal(body.metadata.video_ids, "v1");
+});
+
+test("comments preserve nested trees, video data and cursor, and resolve link prefixes", async () => {
+  mockFetch(() => jsonOk({ post_tree: { children: [{ post: { id: "c", parent_id: POST, metadata: { video_ids: "v" } }, children: [{ post: { id: "r", parent_id: "c" }, videos: [{ id: "v", duration: 42 }] }] }] }, last: 123 }));
+  const result = JSON.parse(await posts.postCommentsTool.handler({ postId: POST, groupId: GROUP, cursor: "456" }));
+  assert.equal(result.children[0].children[0].videos[0].duration, 42);
+  assert.equal(result.next_cursor, "123");
+  assert.match(calls[0].url, /created-lt=456/);
+  await posts.postCommentsTool.handler({ postId: POST, groupId: GROUP, commentPrefix: "abcdef12" });
+  assert.match(calls[1].url, /comments\/links\/abcdef12/);
+});

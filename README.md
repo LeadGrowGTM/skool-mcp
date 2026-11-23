@@ -137,3 +137,13 @@ npm test   # mocked-HTTP unit tests for comment/video payloads; no live Skool ca
 - **Write operations**, notifications, chat, and billing use `api2.skool.com` REST endpoints.
 - A `User-Agent` header is required (CloudFront blocks bare requests with 403).
 - See `API-DISCOVERY.md` for detailed endpoint documentation and response shapes.
+
+### Comments and video reads
+
+`skool_posts_get` returns the post page plus `comments.children`, a first page of comment trees, and `comments.next_cursor`. Each node contains Skool's raw `post` and, when present, nested `children` and `videos`. The post contains its id, `parent_id`, `root_id`, `created_at`, `user`, and `metadata.content`. Raw video fields such as `video_ids`, `video_links_data`, playback information, thumbnails and duration are retained when Skool supplies them. Video metadata and playback tokens can be temporary; do not assume every provider supplies every field.
+
+For older comments call `skool_post_comments` with the post and group IDs and `cursor` set to `next_cursor`, repeating until it is null. Pinned comments are returned separately when supplied by Skool. To resolve a notification, open its community and post slug with `skool_posts_get`, then call `skool_post_comments` with those IDs and `commentPrefix` set to the notification link's `p` query value. Search the returned tree for that ID prefix, including nested children.
+
+To reply, pass the root post ID as `postId` and the target comment ID as `parentCommentId` to `skool_posts_comment`. Omit `parentCommentId` for a top-level comment. `videoIds` and external video links are accepted on comments; video attachment and threaded writes have not been tested live.
+
+`skool_lessons_list` follows the initial lesson redirect and returns the classroom's raw course tree and selected lesson video data. Supply `lessonId` to select a specific lesson. The available video fields depend on Skool and access rights.

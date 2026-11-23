@@ -39,18 +39,26 @@ export const lessonsListTool = {
   inputSchema: {
     community: z.string().optional().describe("Community slug. Uses default from config if omitted."),
     courseSlug: z.string().describe("The course slug/name to list lessons for"),
+    lessonId: z.string().regex(/^[a-fA-F0-9]{32}$/).optional().describe("Lesson UUID to include its video details"),
   },
-  async handler(args: { community?: string; courseSlug: string }) {
+  async handler(args: { community?: string; courseSlug: string; lessonId?: string }) {
     const config = await loadConfig();
     const slug = args.community || config.defaultCommunity;
     if (!slug) throw new Error("No community specified and no defaultCommunity in config");
 
-    const data = (await nextDataRequest(`/${slug}/classroom/${args.courseSlug}`, {
-      group: slug,
-      course: args.courseSlug,
-    })) as { pageProps?: Record<string, unknown> };
-
+    const params: Record<string, string> = { group: slug, course: args.courseSlug };
+    if (args.lessonId) params.md = args.lessonId;
+    let data = (await nextDataRequest(`/${slug}/classroom/${args.courseSlug}`, params)) as { pageProps?: Record<string, unknown> };
+    const redirect = data.pageProps?.__N_REDIRECT;
+    if (typeof redirect === "string" && !args.lessonId) {
+      const url = new URL(redirect, "https://www.skool.com");
+      const md = url.searchParams.get("md");
+      if (md && /^[a-fA-F0-9]{32}$/.test(md)) {
+        data = await nextDataRequest(`/${slug}/classroom/${args.courseSlug}`, { ...params, md }) as typeof data;
+      }
+    }
     const props = data?.pageProps;
+    if (props?.__N_REDIRECT) throw new Error("Classroom redirected without an accessible lesson");
     if (!props) throw new Error("No pageProps in response");
 
     return JSON.stringify(props, null, 2);

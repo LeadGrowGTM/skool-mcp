@@ -71,3 +71,5 @@ If the status is ok and the body is not JSON, the helper returns the raw text. W
 Any status outside the ok range throws. The message includes the status, the status text, and up to 500 characters of the body. There is no separate branch for 401, 403, or 404. The optional image status check catches that error and reports `statusUnknown`; errors from upload or post creation still propagate. The post or comment tool does not record a local copy, so a propagated error leaves this process with nothing saved.
 
 A network failure rejects before this chart reaches Failed. The helper does not convert that into the status error.
+
+Threaded replies use the web client's `createPost` fields: `root_id` is the root post and `parent_id` is the selected comment. The client also sends `metadata.video_ids` for comments. These threaded and video comment writes are mock-tested only, not verified with a live write.

@@ -140,7 +140,7 @@ async function fetchComments(postId: string, groupId: string, opts: CommentOptio
   const result = await api2Request(`/posts/${encodeURIComponent(postId)}/comments${suffix}`, { queryParams: query }) as {
     post_tree?: { children?: unknown[] }; pinned_post_tree?: { children?: unknown[] }; last?: number | string;
   };
-  return { children: result.post_tree?.children ?? [], pinned: result.pinned_post_tree?.children ?? [], next_cursor: result.last ? String(result.last) : null };
+  return { children: result.post_tree?.children ?? [], pinned: result.pinned_post_tree?.children ?? [], next_cursor: result.last && Number(result.last) !== 0 ? String(result.last) : null };
 }
 
 export const postCommentsTool = {
